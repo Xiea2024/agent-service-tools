@@ -1,0 +1,15 @@
+# 在项目根目录运行：docker compose -f docker/compose.qdrant.yaml up -d
+# 独立于原项目 PostgreSQL/应用编排，只启动本次 RAG 使用的 Qdrant。
+name: dev-issue-rag
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"
+    volumes:
+      # Windows 使用 Docker named volume，保留索引并避免宿主目录文件系统兼容问题。
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  qdrant_data:
