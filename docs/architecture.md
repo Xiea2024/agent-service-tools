@@ -2,6 +2,8 @@
 
 本文描述当前代码中的 SupportPilot 链路。Agent ID 为 `dev-issue-agent`，核心是单 Agent 工具循环；仓库保留的 Supervisor 示例没有接入该业务。
 
+React 本地工作台位于 `frontend/`，通过 Node 端代理复用同一个 Agent 的 `/stream`、`/history`、`/threads` 和服务 `/info`。页面使用完整消息关联工具调用及结果，按用户轮次展示文档证据；token 仅作为当前消息草稿，完整 AI 消息到达后替换草稿。网页匿名用户编号保存在浏览器，会话内容保存在后端 checkpoint，与飞书会话目录独立。代理在服务端读取共享密钥，当前仅供本机使用，尚无登录与逐会话用户鉴权。启动与协议说明见 [React 工作台](../frontend/README.md)。
+
 ## 1. 进程与职责
 
 ```mermaid

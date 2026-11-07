@@ -55,6 +55,7 @@ from schema import (
     UserThreadsInput,
 )
 from service.agui import router as agui_router
+from service.blog import initialize_blog, router as blog_router
 from service.threads import list_user_threads
 from service.utils import (
     convert_message_content_to_string,
@@ -94,6 +95,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     # FastAPI lifespan + 异步上下文管理器：在接收请求前打开存储，服务退出时释放资源。
     try:
+        await asyncio.to_thread(initialize_blog)
         # Initialize both checkpointer (for short-term memory) and store (for long-term memory)
         async with initialize_database() as saver, initialize_store() as store:
             # Set up both components
@@ -143,6 +145,7 @@ if settings.METRICS_ENABLED:
 router = APIRouter(dependencies=[Depends(verify_bearer)])
 # AG-UI protocol endpoints inherit the same bearer auth - see service/agui.py
 router.include_router(agui_router)
+router.include_router(blog_router)
 
 
 @router.get("/info")

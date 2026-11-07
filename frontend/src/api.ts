@@ -1,0 +1,122 @@
+/** 对齐 FastAPI 的 ChatMessage / SSE 协议；网络分包不等于消息边界。 */
+export const AGENT = 'dev-issue-agent';
+
+export interface ToolCall {
+  id: string | null;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export interface ChatMessage {
+  type: 'human' | 'ai' | 'tool' | 'custom';
+  content: string;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string | null;
+  run_id?: string | null;
+}
+
+export interface Thread {
+  thread_id: string;
+  title: string | null;
+  updated_at: string | null;
+}
+
+export interface Metadata {
+  agents: { key: string; description: string }[];
+  models: string[];
+  default_model: string;
+}
+
+export type StreamEvent =
+  | { type: 'token'; content: string }
+  | { type: 'message'; content: ChatMessage }
+  | { type: 'error'; content: string };
+
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', ...init.headers },
+    signal: init.signal ?? AbortSignal.timeout(12_000),
+  });
+  await checkResponse(response);
+  return response.json() as Promise<T>;
+}
+
+async function checkResponse(response: Response) {
+  if (response.ok) return;
+  if (response.status === 401) throw new Error('后端认证失败，请检查根目录 AUTH_SECRET 配置并重启网页服务。');
+  if (response.status === 502 || response.status === 504) throw new Error('暂时无法连接后端，请确认 FastAPI 已启动。');
+  throw new Error(`请求失败（HTTP ${response.status}），请检查后端日志。`);
+}
+
+/** 支持 CRLF、注释、多行 data、UTF-8 跨包，并要求后端明确发送 DONE。 */
+export async function readSSE(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (event: StreamEvent) => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let data: string[] = [];
+  let done = false;
+  function dispatch() {
+    if (!data.length) return;
+    const payload = data.join('\n');
+    data = [];
+    if (payload === '[DONE]') { done = true; return; }
+    const event: unknown = JSON.parse(payload);
+    if (!event || typeof event !== 'object' || !('type' in event) || !('content' in event)) {
+      throw new Error('收到无法识别的流式消息。');
+    }
+    const item = event as StreamEvent;
+    if ((item.type === 'token' || item.type === 'error') && typeof item.content === 'string') onEvent(item);
+    else if (item.type === 'message' && item.content && typeof item.content.content === 'string'
+      && ['human', 'ai', 'tool', 'custom'].includes(item.content.type)) onEvent(item);
+    else throw new Error('收到无法识别的流式消息。');
+  }
+  try {
+    while (!done) {
+      const result = await reader.read();
+      buffer += decoder.decode(result.value, { stream: !result.done });
+      let end: number;
+      while ((end = buffer.indexOf('\n')) !== -1 && !done) {
+        const line = buffer.slice(0, end).replace(/\r$/, '');
+        buffer = buffer.slice(end + 1);
+        if (!line) dispatch();
+        else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+      }
+      if (result.done) {
+        if (buffer.startsWith('data:')) data.push(buffer.slice(5).replace(/^ /, '').replace(/\r$/, ''));
+        dispatch();
+        break;
+      }
+    }
+    if (!done) throw new Error('连接提前结束，回答可能不完整。请刷新历史确认结果后再继续。');
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
+export async function streamAnswer(
+  input: { message: string; thread_id: string; user_id: string; model?: string },
+  signal: AbortSignal,
+  onEvent: (event: StreamEvent) => void,
+) {
+  const response = await fetch(`/api/${AGENT}/stream`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...input, stream_tokens: true }), signal,
+  });
+  await checkResponse(response);
+  if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) {
+    throw new Error('后端没有返回预期的消息流，请检查代理配置。');
+  }
+  await readSSE(response.body, onEvent);
+}
+
+export const listThreads = (user: string) => request<{ threads: Thread[] }>(
+  `/${AGENT}/threads?user_id=${encodeURIComponent(user)}&limit=100`,
+);
+export const getHistory = (thread: string, signal?: AbortSignal) => request<{ messages: ChatMessage[] }>(
+  `/${AGENT}/history`, { method: 'POST', body: JSON.stringify({ thread_id: thread }), signal },
+);

@@ -1,5 +1,7 @@
 # SupportPilot
 
+React 网页工作台支持提问、流式回答、历史会话和文档证据展示，本地启动见 [frontend/README.md](frontend/README.md)。
+
 面向研发问题排查的飞书 Agent：结合用户描述和已导入的知识文档，补充复现信息、提供带出处的排查建议，并整理开发者交接报告。
 
 ## 使用场景
