@@ -110,6 +110,7 @@ extend-select = ["I", "U"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_default_fixture_loop_scope = "function"
+faulthandler_timeout = 60
 
 [tool.pytest_env]
 OPENAI_API_KEY = "sk-fake-openai-key"

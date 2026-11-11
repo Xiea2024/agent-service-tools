@@ -24,6 +24,11 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture
 def mock_env():
-    """Fixture to ensure environment is clean for each test."""
-    with patch.dict(os.environ, {}, clear=True):
+    """Clear application credentials while retaining OS paths needed by SDKs/UI."""
+    runtime_paths = {
+        key: os.environ[key]
+        for key in ("HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "SYSTEMROOT", "TEMP", "TMP")
+        if key in os.environ
+    }
+    with patch.dict(os.environ, runtime_paths, clear=True):
         yield

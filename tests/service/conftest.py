@@ -44,6 +44,7 @@ def mock_agent():
 def mock_settings(mock_env):
     """Fixture to ensure settings are clean for each test."""
     with patch("service.service.settings") as mock_settings:
+        mock_settings.TENANT_MODE = False
         yield mock_settings
 
 

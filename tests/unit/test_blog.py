@@ -1,4 +1,5 @@
 """Exercise the blog router independently of agent/model startup."""
+
 import importlib.util
 from pathlib import Path
 
@@ -6,7 +7,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-spec = importlib.util.spec_from_file_location("blog_under_test", Path(__file__).parents[2] / "src/service/blog.py")
+spec = importlib.util.spec_from_file_location(
+    "blog_under_test", Path(__file__).parents[2] / "src/service/blog.py"
+)
 blog = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(blog)
 
@@ -46,7 +49,9 @@ def test_draft_publish_edit_unpublish_and_delete(client):
 
 def test_recent_posts_order_limit_and_validation(client):
     for number in range(6):
-        client.post("/blog/posts", json={"title": f"文章{number}", "content": "正文", "published": True})
+        client.post(
+            "/blog/posts", json={"title": f"文章{number}", "content": "正文", "published": True}
+        )
     recent = client.get("/blog/posts?limit=5").json()["posts"]
     assert len(recent) == 5
     assert recent[0]["title"] == "文章5"
@@ -57,7 +62,12 @@ def test_recent_posts_order_limit_and_validation(client):
 
 
 def test_sqlite_persists_between_connections(client):
-    post = client.post("/blog/posts", json={"title": "保存", "content": "持久化", "published": True}).json()
+    post = client.post(
+        "/blog/posts", json={"title": "保存", "content": "持久化", "published": True}
+    ).json()
     blog.initialize_blog()
     with blog.closing(blog.connect()) as db:
-        assert db.execute("SELECT content FROM blog_posts WHERE id = ?", (post["id"],)).fetchone()[0] == "持久化"
+        assert (
+            db.execute("SELECT content FROM blog_posts WHERE id = ?", (post["id"],)).fetchone()[0]
+            == "持久化"
+        )

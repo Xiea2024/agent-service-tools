@@ -1,5 +1,10 @@
 /** 对齐 FastAPI 的 ChatMessage / SSE 协议；网络分包不等于消息边界。 */
 export const AGENT = 'dev-issue-agent';
+let selectedTenant = '';
+export function selectTenant(id: string) { selectedTenant = id; }
+function tenantHeaders(): Record<string, string> {
+  return selectedTenant ? { 'X-Tenant-ID': selectedTenant } : {};
+}
 
 export interface ToolCall {
   id: string | null;
@@ -35,7 +40,7 @@ export type StreamEvent =
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...init.headers },
+    headers: { 'Content-Type': 'application/json', ...tenantHeaders(), ...init.headers },
     signal: init.signal ?? AbortSignal.timeout(12_000),
   });
   await checkResponse(response);
@@ -44,7 +49,12 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 
 async function checkResponse(response: Response) {
   if (response.ok) return;
-  if (response.status === 401) throw new Error('后端认证失败，请检查根目录 AUTH_SECRET 配置并重启网页服务。');
+  if (response.status === 401) {
+    window.dispatchEvent(new Event('supportpilot:unauthorized'));
+    throw new Error('身份认证失败，请重新登录；本地模式请检查 AUTH_SECRET 配置。');
+  }
+  if (response.status === 403) throw new Error('你没有当前团队或操作的权限。');
+  if (response.status === 409) throw new Error('操作发生冲突：会话可能仍在执行，或该回答已经评价。');
   if (response.status === 502 || response.status === 504) throw new Error('暂时无法连接后端，请确认 FastAPI 已启动。');
   throw new Error(`请求失败（HTTP ${response.status}），请检查后端日志。`);
 }
@@ -104,7 +114,7 @@ export async function streamAnswer(
   onEvent: (event: StreamEvent) => void,
 ) {
   const response = await fetch(`/api/${AGENT}/stream`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...tenantHeaders() },
     body: JSON.stringify({ ...input, stream_tokens: true }), signal,
   });
   await checkResponse(response);

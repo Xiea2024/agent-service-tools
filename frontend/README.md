@@ -40,6 +40,8 @@ POST / PUT 的 JSON 字段为 `title`、`summary`、`content`、`published`。�
 
 React + TypeScript + Vite 页面，复用现有 FastAPI `dev-issue-agent`，支持提问、流式回答、历史会话与文档证据。网页会话与飞书会话独立，未加入 MCP 或语音功能。
 
+可选团队模式已经支持登录、团队切换、管理员添加成员和导入知识库、本人会话隔离及回答反馈。启用 `TENANT_MODE=true` 时使用 PostgreSQL，并停用共享密钥代理注入；详细启动步骤见[多租户说明](../docs/multi-tenancy.md)。同一后端的博客与原飞书入口在此模式下不开放。下方匿名身份与共享密钥说明适用于默认的本地模式。
+
 ## 本地启动
 
 需要 Node.js 22.12+（推荐当前 Node.js 24 LTS）、npm 和已配置好的 Python 后端。命令均为 PowerShell。

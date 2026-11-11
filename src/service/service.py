@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
+from anyio import CancelScope
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
@@ -55,7 +56,8 @@ from schema import (
     UserThreadsInput,
 )
 from service.agui import router as agui_router
-from service.blog import initialize_blog, router as blog_router
+from service.blog import initialize_blog
+from service.blog import router as blog_router
 from service.threads import list_user_threads
 from service.utils import (
     convert_message_content_to_string,
@@ -64,6 +66,15 @@ from service.utils import (
     messages_from_checkpoint,
     remove_tool_calls,
 )
+from tenancy.api import (
+    TenantMiddleware,
+    business_store,
+    current_principal,
+)
+from tenancy.api import (
+    router as tenant_router,
+)
+from tenancy.store import tenant_database
 
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 logger = logging.getLogger(__name__)
@@ -80,6 +91,10 @@ def verify_bearer(
         Depends(HTTPBearer(description="Please provide AUTH_SECRET api key.", auto_error=False)),
     ],
 ) -> None:
+    if settings.TENANT_MODE:
+        if not current_principal():
+            raise HTTPException(status_code=401)
+        return
     if not settings.AUTH_SECRET:
         return
     auth_secret = settings.AUTH_SECRET.get_secret_value()
@@ -95,9 +110,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     # FastAPI lifespan + 异步上下文管理器：在接收请求前打开存储，服务退出时释放资源。
     try:
-        await asyncio.to_thread(initialize_blog)
+        if not settings.TENANT_MODE:
+            await asyncio.to_thread(initialize_blog)
         # Initialize both checkpointer (for short-term memory) and store (for long-term memory)
-        async with initialize_database() as saver, initialize_store() as store:
+        async with (
+            tenant_database(app),
+            initialize_database() as saver,
+            initialize_store() as store,
+        ):
             # Set up both components
             if hasattr(saver, "setup"):  # ignore: union-attr
                 await saver.setup()
@@ -105,7 +125,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             if hasattr(store, "setup"):  # ignore: union-attr
                 await store.setup()
 
-            if not settings.AUTH_SECRET:
+            if not settings.AUTH_SECRET and not settings.TENANT_MODE:
                 logger.warning(
                     "AUTH_SECRET is not configured — all API endpoints are unauthenticated. "
                     "Set AUTH_SECRET in your environment to enable bearer token authentication."
@@ -113,6 +133,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
             # Configure agents with both memory components and async loading
             agents = get_all_agent_info()
+            if settings.TENANT_MODE:
+                agents = [a for a in agents if a.key == "dev-issue-agent"]
             for a in agents:
                 try:
                     await load_agent(a.key)
@@ -137,6 +159,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(lifespan=lifespan, generate_unique_id_function=custom_generate_unique_id)
+app.add_middleware(TenantMiddleware)
+app.include_router(tenant_router)
 if settings.METRICS_ENABLED:
     from observability.http import install_metrics
 
@@ -153,9 +177,13 @@ async def info() -> ServiceMetadata:
     models = list(settings.AVAILABLE_MODELS)
     models.sort()
     return ServiceMetadata(
-        agents=get_all_agent_info(),
+        agents=[
+            a
+            for a in get_all_agent_info()
+            if not settings.TENANT_MODE or a.key == "dev-issue-agent"
+        ],
         models=models,
-        default_agent=DEFAULT_AGENT,
+        default_agent="dev-issue-agent" if settings.TENANT_MODE else DEFAULT_AGENT,
         default_model=settings.DEFAULT_MODEL,
     )
 
@@ -171,7 +199,24 @@ async def _handle_input(
     thread_id = user_input.thread_id or str(uuid4())
     user_id = user_input.user_id or str(uuid4())
 
-    configurable = {"thread_id": thread_id, "user_id": user_id}
+    principal = current_principal()
+    external_thread_id = thread_id
+    if principal:
+        if user_input.agent_config:
+            raise HTTPException(422, "团队工作台不接受自定义 agent_config")
+        if agent_id != "dev-issue-agent":
+            raise HTTPException(404, "该 Agent 尚未支持多租户")
+        user_id = principal.memory_user_id
+        thread_id = await business_store().thread(
+            principal, external_thread_id, agent_id, title=user_input.message
+        )
+
+    configurable: dict[str, Any] = {"thread_id": thread_id, "user_id": user_id}
+    if principal:
+        configurable["tenant_id"] = principal.tenant_id
+        configurable["rag_document_ids"] = [
+            row["document_id"] for row in await business_store().documents(principal)
+        ]
     if user_input.model is not None:
         ensure_model_available(user_input.model)
         configurable["model"] = user_input.model
@@ -183,7 +228,17 @@ async def _handle_input(
 
     if user_input.agent_config:
         # Check for reserved keys (including 'model' even if not in configurable)
-        reserved_keys = {"thread_id", "user_id", "model", "task_id", "trace_id", "run_id"}
+        reserved_keys = {
+            "thread_id",
+            "user_id",
+            "tenant_id",
+            "checkpoint_id",
+            "checkpoint_ns",
+            "model",
+            "task_id",
+            "trace_id",
+            "run_id",
+        }
         overlap = reserved_keys & user_input.agent_config.keys()
         overlap |= {key for key in user_input.agent_config if key.startswith("langfuse_")}
         if overlap:
@@ -203,7 +258,20 @@ async def _handle_input(
     )
 
     # Check for interrupts that need to be resumed
-    state = await agent.aget_state(config=config)
+    if principal:
+        config["metadata"]["tenant_id"] = principal.tenant_id
+        await business_store().start_run(principal, run_id, external_thread_id, user_input.message)
+    try:
+        state = await agent.aget_state(config=config)
+    except BaseException as exc:
+        if principal:
+            with CancelScope(shield=True):
+                await business_store().finish_run(
+                    principal,
+                    run_id,
+                    "interrupted" if isinstance(exc, asyncio.CancelledError) else "failed",
+                )
+        raise
 
     interrupted_tasks = [
         task for task in state.tasks if hasattr(task, "interrupts") and task.interrupts
@@ -240,6 +308,8 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
     # in interrupt-agent, or a tool step in research-assistant), it's omitted. Arguably,
     # you'd want to include it. You could update the API to return a list of ChatMessages
     # in that case.
+    if current_principal() and agent_id == DEFAULT_AGENT:
+        agent_id = "dev-issue-agent"
     agent: AgentGraph = get_agent(agent_id)
     kwargs, run_id = await _handle_input(user_input, agent, agent_id)
 
@@ -260,14 +330,32 @@ async def invoke(user_input: UserInput, agent_id: str = DEFAULT_AGENT) -> ChatMe
             raise ValueError(f"Unexpected response type: {response_type}")
 
         output.run_id = str(run_id)
+        if principal := current_principal():
+            evidence = [
+                langchain_to_chat_message(m).model_dump()
+                for m in response.get("messages", [])
+                if isinstance(m, ToolMessage)
+            ]
+            await business_store().finish_run(
+                principal, run_id, "succeeded", output.content, evidence
+            )
         return output
+    except asyncio.CancelledError:
+        if principal := current_principal():
+            with CancelScope(shield=True):
+                await business_store().finish_run(principal, run_id, "interrupted")
+        raise
     except Exception as e:
+        if principal := current_principal():
+            await business_store().finish_run(principal, run_id, "failed")
         logger.error(f"An exception occurred: {e}")
         raise HTTPException(status_code=500, detail="Unexpected error")
 
 
 async def message_generator(
-    user_input: StreamInput, agent_id: str = DEFAULT_AGENT
+    user_input: StreamInput,
+    agent_id: str = DEFAULT_AGENT,
+    prepared: tuple[dict[str, Any], UUID] | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Generate a stream of messages from the agent.
@@ -275,7 +363,11 @@ async def message_generator(
     This is the workhorse method for the /stream endpoint.
     """
     agent: AgentGraph = get_agent(agent_id)
-    kwargs, run_id = await _handle_input(user_input, agent, agent_id)
+    kwargs, run_id = prepared or await _handle_input(user_input, agent, agent_id)
+    principal = current_principal()
+    answer = ""
+    evidence = []
+    outcome = "interrupted"
 
     try:
         # Process streamed events from the graph and yield messages over the SSE stream.
@@ -354,6 +446,10 @@ async def message_generator(
                 # LangGraph re-sends the input message, which feels weird, so drop it
                 if chat_message.type == "human" and chat_message.content == user_input.message:
                     continue
+                if chat_message.type == "ai" and not chat_message.tool_calls:
+                    answer = chat_message.content
+                elif chat_message.type == "tool":
+                    evidence.append(chat_message.model_dump())
                 yield f"data: {json.dumps({'type': 'message', 'content': chat_message.model_dump()})}\n\n"
 
             if stream_mode == "messages":
@@ -372,11 +468,17 @@ async def message_generator(
                     # that the model is asking for a tool to be invoked.
                     # So we only print non-empty content.
                     yield f"data: {json.dumps({'type': 'token', 'content': convert_message_content_to_string(content)})}\n\n"
+        outcome = "succeeded" if answer else "failed"
     except Exception as e:
+        outcome = "failed"
         logger.error(f"Error in message generator: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': 'Internal server error'})}\n\n"
     finally:
-        yield "data: [DONE]\n\n"
+        if principal:
+            with CancelScope(shield=True):
+                await business_store().finish_run(principal, run_id, outcome, answer, evidence)
+        if outcome != "interrupted":
+            yield "data: [DONE]\n\n"
 
 
 def _create_ai_message(parts: dict) -> AIMessage:
@@ -419,8 +521,16 @@ async def stream(user_input: StreamInput, agent_id: str = DEFAULT_AGENT) -> Stre
     Set `stream_tokens=false` to return intermediate messages but not token-by-token.
     """
     # SSE（text/event-stream）：在同一个 HTTP 响应中持续发送事件，客户端逐行解析。
+    # Tenant authorization and conflict detection must happen before SSE headers.
+    prepared = None
+    if current_principal():
+        if agent_id == DEFAULT_AGENT:
+            agent_id = "dev-issue-agent"
+        prepared = await _handle_input(user_input, get_agent(agent_id), agent_id)
     return StreamingResponse(
-        message_generator(user_input, agent_id),
+        message_generator(user_input, agent_id, prepared)
+        if prepared
+        else message_generator(user_input, agent_id),
         media_type="text/event-stream",
     )
 
@@ -453,8 +563,13 @@ async def history(input: ChatHistoryInput, agent_id: str = DEFAULT_AGENT) -> Cha
 
     If agent_id is not provided, the default agent will be used.
     """
+    if current_principal() and agent_id == DEFAULT_AGENT:
+        agent_id = "dev-issue-agent"
     agent: AgentGraph = get_agent(agent_id)
-    config = RunnableConfig(configurable={"thread_id": input.thread_id})
+    thread_id = input.thread_id
+    if principal := current_principal():
+        thread_id = await business_store().thread(principal, thread_id, agent_id)
+    config = RunnableConfig(configurable={"thread_id": thread_id})
     try:
         messages: list[BaseMessage] = []
         # Functional-API agents keep the conversation in `__previous__`, which aget_state
@@ -487,6 +602,12 @@ async def threads(
     trust model as /history. Put your own authorization in front of this before end
     users can reach it.
     """
+    if principal := current_principal():
+        if agent_id == DEFAULT_AGENT:
+            agent_id = "dev-issue-agent"
+        return UserThreads(threads=await business_store().threads(principal, agent_id, input.limit))
+    if input.user_id is None:
+        raise HTTPException(422, "本地模式需要 user_id")
     agent: AgentGraph = get_agent(agent_id)
     checkpointer = getattr(agent, "checkpointer", None)
     if not checkpointer:

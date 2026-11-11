@@ -22,7 +22,8 @@
 | --- | --- | --- |
 | 研发问题问答 | [dev_issue_agent.py](../src/agents/dev_issue_agent.py)、[agents.py](../src/agents/agents.py) | [Agent 测试](../tests/agents/test_dev_issue_agent.py)、[RAG 图测试](../tests/agents/test_dev_issue_rag.py) |
 | 飞书渠道与网络适配 | [run_feishu.py](../src/run_feishu.py) | [桥接测试](../tests/test_feishu.py)、[SDK 会话测试](../tests/test_feishu_session_sdk.py) |
-| React 网页工作台 | [App.tsx](../frontend/src/App.tsx)、[api.ts](../frontend/src/api.ts)、[conversation.ts](../frontend/src/conversation.ts) | 前端测试覆盖 SSE 分包、消息去重、历史继续与证据恢复；复用原有 API，当前为本地运行，未包含登录与公网部署 |
+| React 网页工作台 | [App.tsx](../frontend/src/App.tsx)、[api.ts](../frontend/src/api.ts)、[conversation.ts](../frontend/src/conversation.ts) | 前端测试覆盖 SSE 分包、消息去重、历史继续与证据恢复；默认本地模式，另有可选的团队登录模式；未完成公网部署验收 |
+| 多租户与 PostgreSQL 业务持久化 | [tenancy](../src/tenancy/)、[TenantWorkspace.tsx](../frontend/src/TenantWorkspace.tsx)、[迁移](../src/tenancy/migrations/001_initial.sql) | [PostgreSQL 集成测试](../tests/test_tenancy_postgres.py)、[检索隔离测试](../tests/test_tenant_retrieval.py)；覆盖团队与成员、会话归属、运行与快照、反馈、知识库隔离；[范围与限制](multi-tenancy.md) |
 | 文档入库与检索 | [feishu_documents.py](../src/feishu_documents.py)、[document_chunks.py](../src/document_chunks.py)、[embedding_client.py](../src/embedding_client.py)、[qdrant_store.py](../src/qdrant_store.py)、[document_retrieval.py](../src/document_retrieval.py) | [切分](../tests/test_document_chunks.py)、[向量库](../tests/test_qdrant_store.py)、[检索](../tests/test_document_retrieval.py) 与对应 CLI |
 | 会话管理 | [feishu_sessions.py](../src/feishu_sessions.py)、[feishu_cards.py](../src/feishu_cards.py) | [会话 SQL 测试](../tests/test_feishu_sessions.py)、[菜单测试](../tests/test_feishu_session_ui.py) |
 | 回答反馈 | [feedback.py](../src/feedback.py)、[feishu_feedback.py](../src/feishu_feedback.py) | [持久反馈测试](../tests/test_feedback.py)、[真实 SDK 离线接线](../tests/test_feishu_feedback_sdk.py) |

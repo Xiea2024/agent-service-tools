@@ -225,7 +225,6 @@ async def main() -> None:
             # Display user ID (for debugging or user information)
             st.text_input("User ID (read-only)", value=user_id, disabled=True)
 
-
         with st.popover(":material/policy: Privacy", use_container_width=True):
             st.write(
                 "Prompts, responses and feedback in this app are anonymously recorded and saved to LangSmith for product evaluation and improvement purposes only."
@@ -252,9 +251,7 @@ async def main() -> None:
         if st.button(":material/upload: Share/resume chat", use_container_width=True):
             share_chat_dialog()
 
-        st.caption(
-            "Made by Xiea"
-        )
+        st.caption("Made by Xiea")
 
     # Draw existing messages
     messages: list[ChatMessage] = st.session_state.messages

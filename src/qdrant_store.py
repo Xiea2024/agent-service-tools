@@ -7,6 +7,7 @@
 from dataclasses import asdict
 from hashlib import sha256
 from pathlib import Path
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import AnyHttpUrl, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,10 +40,14 @@ def create_qdrant_client(settings: QdrantSettings) -> QdrantClient:
     )
 
 
-def index_vectors(client: QdrantClient, collection: str, data: DocumentVectors) -> int:
+def index_vectors(
+    client: QdrantClient, collection: str, data: DocumentVectors, *, tenant_id: str | None = None
+) -> int:
     """先校验再 upsert，最后逐批读回核对；返回本次确认写入的片段数。"""
     # 即使调用方在创建模型后修改了内部 list，入库前也必须重新校验。
     data = DocumentVectors.model_validate_json(data.model_dump_json())
+    if tenant_id:
+        tenant_id = str(UUID(tenant_id))
     profile = {
         "index_schema": "dev-issue-documents-v1",
         "embedding_model": data.embedding_model,
@@ -73,7 +78,12 @@ def index_vectors(client: QdrantClient, collection: str, data: DocumentVectors) 
         key="document_id", match=models.MatchValue(value=data.batch.document.document_id)
     )
     stale_filter = models.Filter(
-        must=[document_filter],
+        must=[
+            document_filter,
+            models.FieldCondition(key="tenant_id", match=models.MatchValue(value=tenant_id))
+            if tenant_id
+            else models.IsEmptyCondition(is_empty=models.PayloadField(key="tenant_id")),
+        ],
         must_not=[
             models.FieldCondition(
                 key="import_fingerprint", match=models.MatchValue(value=fingerprint)
@@ -88,7 +98,9 @@ def index_vectors(client: QdrantClient, collection: str, data: DocumentVectors) 
         # 不将正文与向量分开排序或分开写库：同一个 Point 包含 ID + vector + payload。
         points = [
             models.PointStruct(
-                id=chunk.chunk_id,
+                id=str(uuid5(NAMESPACE_URL, f"supportpilot:{tenant_id}:{chunk.chunk_id}"))
+                if tenant_id
+                else chunk.chunk_id,
                 vector=vector,
                 payload={
                     **asdict(chunk),
@@ -96,6 +108,7 @@ def index_vectors(client: QdrantClient, collection: str, data: DocumentVectors) 
                     "import_fingerprint": fingerprint,
                     "content_sha256": data.batch.document.content_sha256,
                     "chunking": data.batch.chunking.model_dump(),
+                    **({"tenant_id": tenant_id} if tenant_id else {}),
                 },
             )
             for chunk, vector in zip(

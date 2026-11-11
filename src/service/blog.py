@@ -3,7 +3,7 @@
 import os
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -14,7 +14,9 @@ router = APIRouter(prefix="/blog", tags=["blog"])
 
 
 def database_path() -> Path:
-    return Path(os.environ.get("BLOG_DB_PATH", Path(__file__).resolve().parents[2] / ".local/blog.sqlite3"))
+    return Path(
+        os.environ.get("BLOG_DB_PATH", Path(__file__).resolve().parents[2] / ".local/blog.sqlite3")
+    )
 
 
 def connect() -> sqlite3.Connection:
@@ -32,7 +34,9 @@ def connect() -> sqlite3.Connection:
         updated_at TEXT NOT NULL,
         published_at TEXT
     )""")
-    db.execute("CREATE INDEX IF NOT EXISTS blog_posts_recent ON blog_posts(published, published_at DESC)")
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS blog_posts_recent ON blog_posts(published, published_at DESC)"
+    )
     db.commit()
     return db
 
@@ -55,7 +59,8 @@ def list_posts(limit: int = Query(100, ge=1, le=100), drafts: bool = False):
         rows = db.execute(
             "SELECT id, title, summary, published, created_at, updated_at, published_at FROM blog_posts "
             + ("" if drafts else "WHERE published = 1 ")
-            + "ORDER BY COALESCE(published_at, created_at) DESC, id DESC LIMIT ?", (limit,)
+            + "ORDER BY COALESCE(published_at, created_at) DESC, id DESC LIMIT ?",
+            (limit,),
         ).fetchall()
         return {"posts": [dict(row) for row in rows]}
 
@@ -73,7 +78,7 @@ def save_post(post: PostInput, post_id: str | None = None):
     title, content = post.title.strip(), post.content.strip()
     if not title or not content:
         raise HTTPException(422, "标题和正文不能为空")
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with closing(connect()) as db, db:
         previous = None
         if post_id:
@@ -81,15 +86,27 @@ def save_post(post: PostInput, post_id: str | None = None):
             if previous is None:
                 raise HTTPException(404, "文章不存在")
         post_id = post_id or str(uuid4())
-        published_at = (previous["published_at"] if previous else None) or (now if post.published else None)
-        db.execute("""INSERT INTO blog_posts
+        published_at = (previous["published_at"] if previous else None) or (
+            now if post.published else None
+        )
+        db.execute(
+            """INSERT INTO blog_posts
             (id, title, summary, content, published, created_at, updated_at, published_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET title=excluded.title, summary=excluded.summary,
                 content=excluded.content, published=excluded.published,
                 updated_at=excluded.updated_at, published_at=excluded.published_at""",
-            (post_id, title, post.summary.strip(), content, post.published,
-             previous["created_at"] if previous else now, now, published_at))
+            (
+                post_id,
+                title,
+                post.summary.strip(),
+                content,
+                post.published,
+                previous["created_at"] if previous else now,
+                now,
+                published_at,
+            ),
+        )
     return get_post(post_id)
 
 

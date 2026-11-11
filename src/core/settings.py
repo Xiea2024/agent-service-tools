@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     LOG_LEVEL: LogLevel = LogLevel.WARNING
 
     AUTH_SECRET: SecretStr | None = None
+    TENANT_MODE: bool = False
+    TENANT_COOKIE_SECURE: bool = True
+    TENANT_ALLOWED_ORIGINS: str = (
+        "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173"
+    )
     METRICS_ENABLED: bool = False
 
     OPENAI_API_KEY: SecretStr | None = None

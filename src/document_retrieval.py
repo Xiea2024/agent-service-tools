@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from langchain_core.embeddings import Embeddings
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from openai import APIError
 from pydantic import BaseModel, Field, ValidationError
@@ -77,6 +78,9 @@ def query_index(
     embedding_config: EmbeddingSettings,
     qdrant_config: QdrantSettings,
     retrieval_config: RetrievalSettings,
+    *,
+    tenant_id: str | None = None,
+    document_ids: list[str] | None = None,
 ) -> list[SearchHit]:
     """可注入客户端的检索核心，便于用真实本地 Qdrant 和假向量做离线测试。"""
     from qdrant_client import models
@@ -84,6 +88,8 @@ def query_index(
     query = SearchInput(query=query).query.strip()
     if not query:
         raise RetrievalError("invalid_query", "检索问题不能只有空白。")
+    if document_ids == []:
+        return []
     info = client.get_collection(qdrant_config.QDRANT_COLLECTION)
     params = info.config.params.vectors
     expected = {
@@ -114,6 +120,18 @@ def query_index(
         score_threshold=retrieval_config.RAG_SCORE_THRESHOLD,
         with_payload=True,
         with_vectors=False,
+        query_filter=models.Filter(
+            must=[
+                models.FieldCondition(key="tenant_id", match=models.MatchValue(value=tenant_id))
+                if tenant_id
+                else models.IsEmptyCondition(is_empty=models.PayloadField(key="tenant_id"))
+            ]
+            + (
+                [models.FieldCondition(key="document_id", match=models.MatchAny(any=document_ids))]
+                if document_ids is not None
+                else []
+            )
+        ),
     ).points
     hits = []
     for point in points:
@@ -139,8 +157,13 @@ def query_index(
     return hits
 
 
-def search_documents(query: str) -> list[SearchHit]:
+def search_documents(
+    query: str, *, tenant_id: str | None = None, document_ids: list[str] | None = None
+) -> list[SearchHit]:
     """创建并关闭每次调用的连接；只读已有索引，不自动建库或修改文档。"""
+    if document_ids == []:
+        SearchInput(query=query)
+        return []
     try:
         # Qdrant 是可选依赖；未安装时普通对话仍能启动，实际检索再给出明确提示。
         from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
@@ -163,6 +186,8 @@ def search_documents(query: str) -> list[SearchHit]:
                 embedding_config,
                 qdrant_config,
                 retrieval_config,
+                tenant_id=tenant_id,
+                document_ids=document_ids,
             )
     except ValidationError as exc:
         raise RetrievalError(
@@ -179,22 +204,41 @@ def search_documents(query: str) -> list[SearchHit]:
 
 
 @tool(args_schema=SearchInput)
-async def search_feishu_documents(query: str) -> dict:
+async def search_feishu_documents(query: str, config: RunnableConfig) -> dict:
     """检索已导入的飞书研发文档；遇到故障排查或知识库问题时使用，返回正文与来源链接。
 
     查询应包含问题现象与关键词；资料只是排查证据，不能证明当前故障根因。
     只搜索已入库文档，不会实时读取整个飞书知识库、搜索 Issue 或执行命令。
     """
     with operation("retrieval") as measured:
-        return await _measured_search(query, measured)
+        from core import settings
+
+        tenant_id = config.get("configurable", {}).get("tenant_id")
+        document_ids = config.get("configurable", {}).get("rag_document_ids")
+        if settings.TENANT_MODE and (not tenant_id or document_ids is None):
+            return {
+                "status": "error",
+                "error_code": "missing_tenant",
+                "message": "缺少可信团队上下文",
+                "hits": [],
+            }
+        return await _measured_search(query, measured, tenant_id, document_ids)
 
 
-async def _measured_search(query: str, measured: dict) -> dict:
+async def _measured_search(
+    query: str, measured: dict, tenant_id: str | None = None, document_ids: list[str] | None = None
+) -> dict:
     try:
         # 当前复用同步 SDK，因此移到工作线程，避免阻塞 FastAPI 的 asyncio 事件循环。
         # 外层超时后线程中的 HTTP 请求可能继续运行至自身超时；它们都是只读请求。
         async with asyncio.timeout(25):
-            hits = await asyncio.to_thread(search_documents, query)
+            hits = (
+                await asyncio.to_thread(
+                    search_documents, query, tenant_id=tenant_id, document_ids=document_ids
+                )
+                if tenant_id
+                else await asyncio.to_thread(search_documents, query)
+            )
     except (RetrievalError, TimeoutError) as exc:
         measured["outcome"] = "timeout" if isinstance(exc, TimeoutError) else "error"
         code = exc.code if isinstance(exc, RetrievalError) else "timeout"

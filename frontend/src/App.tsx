@@ -45,8 +45,20 @@ function CopyAnswer({ text }: { text: string }) {
   }} aria-label="复制回答">{state === '已复制' ? <Check size={13} /> : <Copy size={13} />}{state || '复制回答'}</button>;
 }
 
-export default function App() {
-  const [user] = useState(browserUser);
+function AnswerFeedback({ runId }: { runId: string }) {
+  const [state, setState] = useState('');
+  async function submit(helpful: boolean) {
+    setState('正在提交');
+    try {
+      await request(`/runs/${runId}/feedback`, { method: 'POST', body: JSON.stringify({ helpful }) });
+      setState('评价已保存');
+    } catch (e) { setState(e instanceof Error ? e.message : '提交失败'); }
+  }
+  return <span>{state || <><button className="text-button" onClick={() => void submit(true)}>有帮助</button><button className="text-button" onClick={() => void submit(false)}>需改进</button></>}</span>;
+}
+
+export default function App({ identity, tenantMode = false }: { identity?: string; tenantMode?: boolean } = {}) {
+  const [user] = useState(() => identity || browserUser());
   const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [model, setModel] = useState('');
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -202,7 +214,7 @@ export default function App() {
       </nav>
       <div className="sidebar-bottom">
         <div className="scope-note"><ShieldCheck size={16} /><span>从证据出发，逐步定位<small>文档检索 · 多轮上下文</small></span></div>
-        <button className="profile" onClick={() => setShowHelp(true)}><span className="avatar">研</span><span>个人工作空间<small>此浏览器的独立会话</small></span><CircleHelp size={16} /></button>
+        <button className="profile" onClick={() => setShowHelp(true)}><span className="avatar">研</span><span>{tenantMode ? '团队工作空间' : '个人工作空间'}<small>{tenantMode ? '本人会话 · 团队知识库' : '此浏览器的独立会话'}</small></span><CircleHelp size={16} /></button>
       </div>
     </aside>
 
@@ -244,7 +256,7 @@ export default function App() {
                 {turn.status === 'streaming' && <div className="stream-status" role="status"><span className="pulse-dots"><i /><i /><i /></span>{activity}</div>}
                 {turn.error && <div className={`turn-error ${turn.status === 'stopped' ? 'stopped' : ''}`} role="alert">{turn.error}</div>}
                 {turn.status === 'complete' && !answer && !turn.draft && <div className="turn-error">本轮没有返回文字回答，请刷新历史确认结果。</div>}
-                {turn.status !== 'streaming' && (answer || turn.draft) && <div className="answer-footer"><CopyAnswer text={[answer, turn.draft].filter(Boolean).join('\n\n')} />{runId && <span title={runId}>运行 {runId.slice(0, 8)}</span>}</div>}
+                {turn.status !== 'streaming' && (answer || turn.draft) && <div className="answer-footer"><CopyAnswer text={[answer, turn.draft].filter(Boolean).join('\n\n')} />{runId && <span title={runId}>运行 {runId.slice(0, 8)}</span>}{tenantMode && runId && turn.status === 'complete' && <AnswerFeedback runId={runId} />}</div>}
               </div></div>
             </section>;
           })}
@@ -274,6 +286,6 @@ export default function App() {
       <div className="evidence-foot"><ShieldCheck size={14} /><span>资料用于辅助判断，不能单独证明故障根因。</span></div>
     </aside>}
 
-    {showHelp && <div className="modal-backdrop" onClick={() => setShowHelp(false)}><section role="dialog" aria-modal="true" aria-labelledby="help-title" className="help-modal" onClick={event => event.stopPropagation()}><button autoFocus className="icon-button modal-close" aria-label="关闭使用说明" onClick={() => setShowHelp(false)}><X size={20} /></button><span className="welcome-mark"><Command size={26} /></span><h2 id="help-title">你的研发排查工作台</h2><p>输入问题开始排查，左侧继续历史对话，右侧核对文档证据。网页会话与飞书会话独立。</p><p>此浏览器保存匿名用户编号，会话内容由后端 checkpoint 保存。清除浏览器数据后，历史列表将使用新身份。</p><label className="identity-label">当前网页身份<code>{user}</code></label><p className="muted">当前为本地工作台，共享 API 认证不提供完整的多用户权限隔离。</p><button className="primary-button" onClick={() => setShowHelp(false)}>开始排查<ArrowRight size={16} /></button></section></div>}
+    {showHelp && <div className="modal-backdrop" onClick={() => setShowHelp(false)}><section role="dialog" aria-modal="true" aria-labelledby="help-title" className="help-modal" onClick={event => event.stopPropagation()}><button autoFocus className="icon-button modal-close" aria-label="关闭使用说明" onClick={() => setShowHelp(false)}><X size={20} /></button><span className="welcome-mark"><Command size={26} /></span><h2 id="help-title">你的研发排查工作台</h2><p>输入问题开始排查，左侧继续历史对话，右侧核对文档证据。</p><p>{tenantMode ? '会话按团队和登录账号保存，仅本人可见；知识库由当前团队共享。切换团队后会打开对应的独立工作空间。' : '此浏览器保存匿名用户编号，会话内容由后端 checkpoint 保存。清除浏览器数据后，历史列表将使用新身份。'}</p><label className="identity-label">当前网页身份<code>{user}</code></label><p className="muted">{tenantMode ? '团队管理员可在顶部管理成员和导入知识库。' : '当前为本地工作台，共享 API 认证不提供完整的多用户权限隔离。'}</p><button className="primary-button" onClick={() => setShowHelp(false)}>开始排查<ArrowRight size={16} /></button></section></div>}
   </div>;
 }

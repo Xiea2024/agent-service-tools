@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
       target: env.WEB_API_TARGET || `http://127.0.0.1:${env.PORT || '8080'}`,
       changeOrigin: true,
       rewrite: (path: string) => path.replace(/^\/api(?=\/|$)/, ''),
-      headers: env.AUTH_SECRET ? { Authorization: `Bearer ${env.AUTH_SECRET}` } : {},
+      headers: env.TENANT_MODE !== 'true' && env.AUTH_SECRET ? { Authorization: `Bearer ${env.AUTH_SECRET}` } : {},
       timeout: 120_000,
       proxyTimeout: 120_000,
     },

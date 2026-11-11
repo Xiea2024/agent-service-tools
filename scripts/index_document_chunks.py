@@ -32,11 +32,18 @@ def main() -> None:
         "--reuse-vectors", action="store_true", help="直接导入向量文件，不请求 Embedding"
     )
     parser.add_argument("--batch-size", type=int, default=16, help="Embedding 每批片段数，1–32")
+    parser.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="只生成 vectors.json，供团队管理员在网页导入，不写入共享索引",
+    )
     args = parser.parse_args()
     if not 1 <= args.batch_size <= 32:
         parser.error("--batch-size 应在 1–32 之间")
     if args.reuse_vectors and args.output:
         parser.error("重用模式不生成新的向量文件，请省略 --output")
+    if args.prepare_only and args.reuse_vectors:
+        parser.error("--prepare-only 不能与 --reuse-vectors 一起使用")
     output = args.output or args.input.with_name(
         args.input.stem.removesuffix(".chunks") + ".vectors.json"
     )
@@ -55,8 +62,9 @@ def main() -> None:
             config = EmbeddingSettings()
             # 数据库不可达时先停止，避免明知无法入库仍产生 Embedding 开销。
             stage = "Qdrant 连通检查"
-            with closing(create_qdrant_client(settings)) as client:
-                client.get_collections()
+            if not args.prepare_only:
+                with closing(create_qdrant_client(settings)) as client:
+                    client.get_collections()
             stage = "Embedding"
             print(f"正在为 {len(batch.chunks)} 个片段生成文档向量……", flush=True)
             data = embed_chunks(
@@ -66,6 +74,9 @@ def main() -> None:
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(data.model_dump_json(indent=2), encoding="utf-8")
             print(f"向量文件已保存：{output.resolve()}", flush=True)
+        if args.prepare_only:
+            print("准备完成，请登录团队工作台，在团队与知识库中导入向量文件。")
+            return
         stage = "Qdrant 入库与读回验证"
         with closing(create_qdrant_client(settings)) as client:
             count = index_vectors(client, settings.QDRANT_COLLECTION, data)

@@ -3,7 +3,7 @@ import Portal, { BackHome } from './Portal';
 import Blog from './Blog';
 import './portal.css';
 
-const SupportPilot = lazy(() => import('./App'));
+const SupportPilot = lazy(() => import('./TenantWorkspace'));
 
 export default function Router() {
   const path = window.location.pathname.replace(/\/+$/, '') || '/';
