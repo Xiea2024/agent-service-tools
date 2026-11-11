@@ -1,0 +1,16 @@
+# Static React demo only. No backend, database, Docker, or model credentials.
+services:
+  - type: web
+    name: supportpilot-static-demo
+    runtime: static
+    repo: https://github.com/Xiea2024/agent-service-tools
+    branch: main
+    rootDir: frontend
+    buildCommand: npm ci && npm run build:demo
+    staticPublishPath: dist-demo
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: SKIP_INSTALL_DEPS
+        value: "true"
