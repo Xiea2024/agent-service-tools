@@ -54,6 +54,8 @@ async function checkResponse(response: Response) {
     throw new Error('身份认证失败，请重新登录；本地模式请检查 AUTH_SECRET 配置。');
   }
   if (response.status === 403) throw new Error('你没有当前团队或操作的权限。');
+  if (response.status === 429) throw new Error('操作过于频繁、任务正在执行或今日额度已用完，请稍后重试。');
+  if (response.status === 503) throw new Error('服务暂不可用，请稍后重试。');
   if (response.status === 409) throw new Error('操作发生冲突：会话可能仍在执行，或该回答已经评价。');
   if (response.status === 502 || response.status === 504) throw new Error('暂时无法连接后端，请确认 FastAPI 已启动。');
   throw new Error(`请求失败（HTTP ${response.status}），请检查后端日志。`);

@@ -10,6 +10,10 @@ checkpoints.db-*
 # Local runtime data, downloaded documents, backups and scratch files
 /.local/
 /.tmp/
+/docker/tls/
+/docker/secrets/
+/backups/
+*.dump
 /reports/
 /pytest-cache-files-*/
 .ruff_cache/

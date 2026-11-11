@@ -105,9 +105,44 @@ jobs:
           path: frontend/dist/
           retention-days: 14
 
+  gateway:
+    name: Real gateways and public HTTPS stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-python
+      - name: Start synthetic model upstream and LiteLLM
+        run: docker compose -f docker/compose.gateway-test.yaml up -d
+      - name: Verify LiteLLM API, streaming, tools and budget denial
+        env:
+          GATEWAY_TEST_URL: http://127.0.0.1:14000
+        run: uv run --no-sync pytest tests/integration/test_litellm_gateway.py -q
+      - name: Build public backend and web
+        run: |
+          docker build -f docker/Dockerfile.public -t supportpilot-backend-public:security-check .
+          docker build -f docker/Dockerfile.web -t supportpilot-web:security-check .
+      - name: Start isolated HTTPS public stack
+        run: |
+          uv run --no-sync python tests/gateway/prepare_public_stack.py
+          docker compose -p sp-public-check --env-file .tmp/public-stack/.env.public -f .tmp/public-stack/docker/compose.public.yaml up -d --no-build --wait --wait-timeout 240
+          docker cp tests/gateway/bootstrap_public_stack.py sp-public-check-backend-1:/tmp/bootstrap.py
+          docker exec sp-public-check-backend-1 python /tmp/bootstrap.py
+      - name: Verify public authentication, restrictions and model streaming
+        run: uv run --no-sync python tests/gateway/check_public_stack.py
+      - name: Clean up disposable stacks
+        if: always()
+        run: |
+          docker compose -f docker/compose.gateway-test.yaml down -v
+          if [ -f .tmp/public-stack/.env.public ]; then
+            docker compose -p sp-public-check --env-file .tmp/public-stack/.env.public -f .tmp/public-stack/docker/compose.public.yaml down -v
+          fi
+
   images:
     name: Container / ${{ matrix.component }}
-    needs: [lint, pytest, frontend]
+    needs: [lint, pytest, frontend, gateway]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -119,6 +154,8 @@ jobs:
         include:
           - component: backend
             dockerfile: docker/Dockerfile.service
+          - component: backend-public
+            dockerfile: docker/Dockerfile.public
           - component: web
             dockerfile: docker/Dockerfile.web
     steps:
@@ -165,6 +202,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
       - name: Verify container starts and becomes healthy
+        if: matrix.component != 'backend-public'
         env:
           IMAGE: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
         shell: bash
@@ -180,6 +218,14 @@ jobs:
           done
           docker logs image-smoke
           exit 1
+      - name: Audit public runtime dependencies
+        if: matrix.component == 'backend-public'
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+        run: >-
+          docker run --rm --user root --entrypoint sh "$IMAGE" -c
+          '/usr/local/bin/python -m pip install -q pip-audit &&
+          /usr/local/bin/python -m pip_audit --path /opt/venv/lib/python3.13/site-packages'
       - name: Log in to GHCR
         if: steps.image.outputs.publish == 'true'
         uses: docker/login-action@v3

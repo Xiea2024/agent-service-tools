@@ -1,0 +1,14 @@
+FROM python:3.13-slim
+WORKDIR /app
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 PUBLIC_DEMO=true
+RUN pip install --no-cache-dir uv==0.13.5
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --only-group public --no-install-project
+RUN groupadd --gid 10001 app && useradd --uid 10001 --gid app --no-create-home app \
+    && mkdir -p /app/.local && chown app:app /app/.local
+COPY src/ ./src/
+COPY scripts/create_tenant_admin.py ./scripts/create_tenant_admin.py
+USER app
+HEALTHCHECK --interval=5s --timeout=3s --start-period=60s --retries=12 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()"
+CMD ["python", "src/run_service.py"]

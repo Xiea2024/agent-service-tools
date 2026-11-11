@@ -4,14 +4,17 @@ Checkpointer 保存执行快照以支持会话恢复；Store 提供跨会话键�
 SQLite/PostgreSQL/MongoDB 可用于 checkpoint；此处仅 PostgreSQL 使用持久化 Store。
 """
 
-from contextlib import AbstractAsyncContextManager
+from __future__ import annotations
 
-from langgraph.checkpoint.mongodb import MongoDBSaver
+from contextlib import AbstractAsyncContextManager
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from langgraph.checkpoint.mongodb import MongoDBSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from core.settings import DatabaseType, settings
-from memory.mongodb import get_mongo_saver
 from memory.postgres import get_postgres_saver, get_postgres_store
 from memory.sqlite import get_sqlite_saver, get_sqlite_store
 
@@ -26,6 +29,8 @@ def initialize_database() -> AbstractAsyncContextManager[
     if settings.DATABASE_TYPE == DatabaseType.POSTGRES:
         return get_postgres_saver()
     if settings.DATABASE_TYPE == DatabaseType.MONGO:
+        from memory.mongodb import get_mongo_saver
+
         return get_mongo_saver()
     else:  # Default to SQLite
         return get_sqlite_saver()

@@ -1,0 +1,39 @@
+name: supportpilot-gateway-test
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ci
+      POSTGRES_PASSWORD: ci-only-test-password
+      POSTGRES_DB: litellm
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U ci -d litellm]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7.4-alpine
+  mock-provider:
+    image: python:3.13-slim
+    command: [python, /test/mock_provider.py]
+    volumes: [../tests/gateway:/test:ro]
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.108.4
+    environment:
+      DATABASE_URL: postgresql://ci:ci-only-test-password@postgres:5432/litellm
+      LITELLM_MASTER_KEY: sk-ci-only-master-key
+      LITELLM_SALT_KEY: ci-only-static-salt
+      UPSTREAM_CHAT_MODEL: openai/mock-chat
+      UPSTREAM_CHAT_BASE: http://mock-provider:8000/v1
+      UPSTREAM_CHAT_KEY: ci-only-upstream-key
+      UPSTREAM_EMBEDDING_MODEL: openai/mock-embedding
+      UPSTREAM_EMBEDDING_BASE: http://mock-provider:8000/v1
+      UPSTREAM_EMBEDDING_KEY: ci-only-upstream-key
+    command: [--config, /app/config.yaml, --port, '4000', --num_workers, '1']
+    volumes: [./litellm.yaml:/app/config.yaml:ro]
+    ports: ['127.0.0.1:14000:4000']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-provider:
+        condition: service_started

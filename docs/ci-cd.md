@@ -1,5 +1,7 @@
 # 一键启动与 GitHub Actions / GHCR
 
+公网版本使用独立 `backend-public` 镜像，增加真实 LiteLLM 与完整 HTTPS 栈联调、运行时依赖审计门禁。操作步骤见[阿里云部署](aliyun-deployment.md)；下文的 `.env.docker` 与 `scripts/start.py` 用于本地团队工作台。
+
 交付链路：Ruff、格式和类型检查 → pytest（真实 PostgreSQL / Redis）与前端测试构建 → 构建后端、网页镜像 → 容器健康检查 → 发布 GHCR。GitHub Actions 负责检查和发布镜像，运行服务仍需要 Docker 主机。
 
 ## 1. 本地一键启动

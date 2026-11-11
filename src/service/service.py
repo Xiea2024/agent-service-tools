@@ -55,7 +55,6 @@ from schema import (
     UserThreads,
     UserThreadsInput,
 )
-from service.agui import router as agui_router
 from service.blog import initialize_blog
 from service.blog import router as blog_router
 from service.threads import list_user_threads
@@ -66,6 +65,7 @@ from service.utils import (
     messages_from_checkpoint,
     remove_tool_calls,
 )
+from tenancy import registration as _registration  # noqa: F401
 from tenancy.api import (
     TenantMiddleware,
     business_store,
@@ -74,6 +74,7 @@ from tenancy.api import (
 from tenancy.api import (
     router as tenant_router,
 )
+from tenancy.security import public_settings
 from tenancy.store import tenant_database
 
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
@@ -110,6 +111,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     # FastAPI lifespan + 异步上下文管理器：在接收请求前打开存储，服务退出时释放资源。
     try:
+        public_settings().validate_production(settings)
         if not settings.TENANT_MODE:
             await asyncio.to_thread(initialize_blog)
         # Initialize both checkpointer (for short-term memory) and store (for long-term memory)
@@ -168,7 +170,10 @@ if settings.METRICS_ENABLED:
 # FastAPI Depends：为本 router 的接口复用 Bearer 校验；未配置 AUTH_SECRET 时直接放行。
 router = APIRouter(dependencies=[Depends(verify_bearer)])
 # AG-UI protocol endpoints inherit the same bearer auth - see service/agui.py
-router.include_router(agui_router)
+if not public_settings().PUBLIC_DEMO:
+    from service.agui import router as agui_router
+
+    router.include_router(agui_router)
 router.include_router(blog_router)
 
 
@@ -202,6 +207,14 @@ async def _handle_input(
     principal = current_principal()
     external_thread_id = thread_id
     if principal:
+        policy = public_settings()
+        if policy.PUBLIC_DEMO:
+            if not policy.PAID_CALLS_ENABLED:
+                raise HTTPException(503, "模型服务暂停")
+            if len(user_input.message) > 4000:
+                raise HTTPException(422, "提问不能超过4000字符")
+            if user_input.model is not None and user_input.model != settings.DEFAULT_MODEL:
+                raise HTTPException(403, "演示环境仅允许指定模型")
         if user_input.agent_config:
             raise HTTPException(422, "团队工作台不接受自定义 agent_config")
         if agent_id != "dev-issue-agent":

@@ -49,6 +49,22 @@ def create_embeddings(
 ) -> OpenAIEmbeddings:
     """统一创建文档/查询向量客户端；仅构建客户端，不会立即发出请求。"""
     config = settings if settings is not None else EmbeddingSettings()
+    from tenancy.security import public_settings
+
+    if public_settings().PUBLIC_DEMO:
+        from tenancy.gateway import gateway_key
+
+        key = gateway_key.get()
+        if not key or not public_settings().PAID_CALLS_ENABLED:
+            raise ValueError("Authenticated model gateway context is required")
+        config = config.model_copy(
+            update={
+                "EMBEDDING_API_KEY": SecretStr(key),
+                "EMBEDDING_BASE_URL": AnyHttpUrl(public_settings().GATEWAY_URL + "/v1"),
+                "EMBEDDING_MODEL": public_settings().DEMO_EMBEDDING_MODEL,
+                "EMBEDDING_MAX_RETRIES": 0,
+            }
+        )
     if http_client is None and config.EMBEDDING_FORCE_TLS12:
         # 入库/连通检查也复用同一兼容选项；显式传入的 MockTransport 保持调用方控制。
         http_client = create_embedding_http_client(config)

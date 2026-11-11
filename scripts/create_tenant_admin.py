@@ -19,7 +19,11 @@ async def create(email, team, encoded):
     async with tenant_database(app):
         if not hasattr(app.state, "business"):
             raise ValueError("请先设置 TENANT_MODE=true 和 PostgreSQL 连接配置")
-        return await app.state.business.create_account(email, encoded, team)
+        from tenancy.security import public_settings
+
+        return await app.state.business.create_account(
+            email, encoded, team, platform_admin=public_settings().PUBLIC_DEMO
+        )
 
 
 def main():

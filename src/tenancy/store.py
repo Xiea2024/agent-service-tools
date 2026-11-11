@@ -24,16 +24,25 @@ def password_hash(password: str) -> str:
     if not 10 <= len(password) <= 256:
         raise ValueError("密码长度必须为 10–256 个字符")
     salt = secrets.token_bytes(16)
-    digest = hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1)
-    return f"scrypt${salt.hex()}${digest.hex()}"
+    digest = hashlib.scrypt(
+        password.encode(), salt=salt, n=131072, r=8, p=1, maxmem=256 * 1024 * 1024
+    )
+    return f"scrypt-v2${salt.hex()}${digest.hex()}"
 
 
 def password_matches(password: str, encoded: str) -> bool:
     try:
         algorithm, salt, expected = encoded.split("$")
-        if algorithm != "scrypt" or len(password) > 256:
+        if algorithm not in {"scrypt", "scrypt-v2"} or len(password) > 256:
             return False
-        actual = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt), n=16384, r=8, p=1)
+        actual = hashlib.scrypt(
+            password.encode(),
+            salt=bytes.fromhex(salt),
+            n=131072 if algorithm == "scrypt-v2" else 16384,
+            r=8,
+            p=1,
+            maxmem=256 * 1024 * 1024,
+        )
         return hmac.compare_digest(actual.hex(), expected)
     except (ValueError, TypeError):
         return False
@@ -48,6 +57,7 @@ class Principal:
     user_id: str
     tenant_id: str
     role: str
+    platform_admin: bool = False
 
     @property
     def memory_user_id(self) -> str:
@@ -75,12 +85,12 @@ class BusinessStore:
                         "INSERT INTO sp_schema_versions(version) VALUES (%s)", (version,)
                     )
 
-    async def create_account(self, email: str, encoded: str, team: str):
+    async def create_account(self, email: str, encoded: str, team: str, *, platform_admin=False):
         user, tenant = str(uuid4()), str(uuid4())
         async with self.pool.connection() as db, db.transaction():
             await db.execute(
-                "INSERT INTO sp_users(id,email,password_hash) VALUES (%s,%s,%s)",
-                (user, email.strip().lower(), encoded),
+                "INSERT INTO sp_users(id,email,password_hash,platform_admin) VALUES (%s,%s,%s,%s)",
+                (user, email.strip().lower(), encoded, platform_admin),
             )
             await db.execute("INSERT INTO sp_tenants(id,name) VALUES (%s,%s)", (tenant, team))
             await db.execute("INSERT INTO sp_memberships VALUES (%s,%s,'admin')", (tenant, user))
@@ -110,8 +120,8 @@ class BusinessStore:
         async with self.pool.connection() as db:
             user = await (
                 await db.execute(
-                    "SELECT u.id,u.email FROM sp_sessions s JOIN sp_users u ON u.id=s.user_id "
-                    "WHERE s.token_hash=%s AND s.expires_at > now()",
+                    "SELECT u.id,u.email,u.platform_admin FROM sp_sessions s JOIN sp_users u ON u.id=s.user_id "
+                    "WHERE s.token_hash=%s AND s.expires_at > now() AND NOT u.disabled AND u.email_verified",
                     (token_hash(token),),
                 )
             ).fetchone()
@@ -131,14 +141,21 @@ class BusinessStore:
         )
         if not selected:
             raise HTTPException(403, "没有该团队的访问权限")
-        return Principal(str(user["id"]), selected["id"], selected["role"]), {
+        return Principal(
+            str(user["id"]), selected["id"], selected["role"], user["platform_admin"]
+        ), {
             "user_id": str(user["id"]),
             "email": user["email"],
             "tenants": memberships,
             "tenant_id": selected["id"],
+            "platform_admin": user["platform_admin"],
         }
 
     async def create_team(self, principal, name):
+        from tenancy.security import public_settings
+
+        if public_settings().PUBLIC_DEMO and not principal.platform_admin:
+            raise HTTPException(403, "仅平台管理员可以创建团队")
         tenant = str(uuid4())
         async with self.pool.connection() as db, db.transaction():
             await db.execute("INSERT INTO sp_tenants(id,name) VALUES (%s,%s)", (tenant, name))
@@ -148,6 +165,10 @@ class BusinessStore:
         return {"id": tenant, "name": name, "role": "admin"}
 
     async def members(self, p):
+        from tenancy.security import public_settings
+
+        if public_settings().PUBLIC_DEMO and p.role != "admin" and not p.platform_admin:
+            raise HTTPException(403, "需要团队管理员权限")
         async with self.pool.connection() as db:
             return await (
                 await db.execute(
@@ -160,6 +181,12 @@ class BusinessStore:
     async def add_member(self, p, email, encoded, role):
         if p.role != "admin":
             raise HTTPException(403, "需要团队管理员权限")
+        from tenancy.security import public_settings
+
+        if public_settings().PUBLIC_DEMO and (
+            encoded or (role == "admin" and not p.platform_admin)
+        ):
+            raise HTTPException(403, "请添加已注册账号；管理角色仅平台管理员可授予")
         async with self.pool.connection() as db, db.transaction():
             if encoded:
                 await db.execute(
@@ -176,6 +203,11 @@ class BusinessStore:
                 "INSERT INTO sp_memberships VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
                 (p.tenant_id, user["id"], role),
             )
+            if p.platform_admin and role == "admin":
+                await db.execute(
+                    "UPDATE sp_memberships SET role='admin' WHERE tenant_id=%s AND user_id=%s",
+                    (p.tenant_id, user["id"]),
+                )
 
     async def thread(self, p, thread_id, agent_id, *, title=None):
         if not thread_id or len(thread_id) > 128:
@@ -211,6 +243,32 @@ class BusinessStore:
     async def start_run(self, p, run_id, thread_id, question):
         try:
             async with self.pool.connection() as db, db.transaction():
+                from tenancy.security import public_settings
+
+                policy = public_settings()
+                if policy.PUBLIC_DEMO:
+                    await db.execute("SELECT pg_advisory_xact_lock(731294811)")
+                    await db.execute(
+                        "UPDATE sp_runs SET status='interrupted',finished_at=now() "
+                        "WHERE status='running' AND created_at < now()-interval '3 minutes'"
+                    )
+                    counts = await (
+                        await db.execute(
+                            "SELECT count(*) FILTER (WHERE status='running') AS active, "
+                            "count(*) FILTER (WHERE status='running' AND user_id=%s) AS own, "
+                            "count(*) FILTER (WHERE created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS global_daily, "
+                            "count(*) FILTER (WHERE user_id=%s AND created_at >= date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS daily "
+                            "FROM sp_runs WHERE status='running' OR created_at >= now()-interval '1 day'",
+                            (p.user_id, p.user_id),
+                        )
+                    ).fetchone()
+                    if counts["own"] or counts["active"] >= policy.DEMO_GLOBAL_CONCURRENCY:
+                        raise HTTPException(429, "任务正在处理中，请稍后重试")
+                    if (
+                        counts["daily"] >= policy.DEMO_DAILY_QUESTIONS
+                        or counts["global_daily"] >= policy.DEMO_GLOBAL_DAILY_QUESTIONS
+                    ):
+                        raise HTTPException(429, "今日提问额度已用完")
                 await db.execute(
                     "INSERT INTO sp_runs(id,thread_id,tenant_id,user_id,status,question) "
                     "VALUES (%s,%s,%s,%s,'running',%s)",
@@ -312,6 +370,79 @@ class BusinessStore:
                 ),
             )
             return count
+
+    async def email_token(self, email, purpose, encoded=None):
+        token = secrets.token_urlsafe(32)
+        async with self.pool.connection() as db, db.transaction():
+            await db.execute("DELETE FROM sp_email_tokens WHERE expires_at <= now()")
+            await db.execute(
+                "INSERT INTO sp_email_tokens VALUES (%s,%s,%s,%s,now()+interval '15 minutes')",
+                (token_hash(token), email, purpose, encoded),
+            )
+        return token
+
+    async def consume_email_token(self, token, purpose, encoded=None):
+        from tenancy.security import public_settings
+
+        policy = public_settings()
+        async with self.pool.connection() as db, db.transaction():
+            row = await (
+                await db.execute(
+                    "DELETE FROM sp_email_tokens WHERE token_hash=%s AND purpose=%s AND expires_at>now() RETURNING *",
+                    (token_hash(token), purpose),
+                )
+            ).fetchone()
+            if not row:
+                raise HTTPException(400, "验证码无效或已过期")
+            if purpose == "register":
+                await db.execute("SELECT pg_advisory_xact_lock(731294812)")
+                existing = await (
+                    await db.execute("SELECT id FROM sp_users WHERE email=%s", (row["email"],))
+                ).fetchone()
+                if existing:
+                    raise HTTPException(400, "无法激活，请尝试登录或找回密码")
+                from tenancy.security import rate_limit
+
+                await rate_limit("activations", "global", policy.DEMO_DAILY_ACTIVATIONS, 86400)
+                user = str(uuid4())
+                await db.execute(
+                    "INSERT INTO sp_users(id,email,password_hash) VALUES (%s,%s,%s)",
+                    (user, row["email"], row["password_hash"]),
+                )
+                await db.execute(
+                    "INSERT INTO sp_memberships VALUES (%s,%s,'member')",
+                    (policy.DEMO_TENANT_ID, user),
+                )
+            else:
+                user = await (
+                    await db.execute(
+                        "UPDATE sp_users SET password_hash=%s WHERE email=%s AND NOT disabled RETURNING id",
+                        (encoded, row["email"]),
+                    )
+                ).fetchone()
+                if user:
+                    await db.execute("DELETE FROM sp_sessions WHERE user_id=%s", (user["id"],))
+            await db.execute(
+                "DELETE FROM sp_email_tokens WHERE email=%s AND purpose=%s", (row["email"], purpose)
+            )
+
+    async def manage_user(self, p, target, *, disabled=None, platform_admin=None):
+        if not p.platform_admin or str(target) == p.user_id:
+            raise HTTPException(403, "仅平台管理员可管理其他账号")
+        async with self.pool.connection() as db, db.transaction():
+            row = await (
+                await db.execute(
+                    "UPDATE sp_users SET disabled=COALESCE(%s,disabled),platform_admin=COALESCE(%s,platform_admin) WHERE id=%s RETURNING id",
+                    (disabled, platform_admin, str(target)),
+                )
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "账号不存在")
+            await db.execute("DELETE FROM sp_sessions WHERE user_id=%s", (str(target),))
+            await db.execute(
+                "INSERT INTO sp_security_events(actor_id,action,target_id) VALUES (%s,%s,%s)",
+                (p.user_id, "account-policy-change", str(target)),
+            )
 
 
 @asynccontextmanager

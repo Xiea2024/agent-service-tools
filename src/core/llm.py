@@ -5,14 +5,9 @@ OpenAI 兼容分支读取 COMPATIBLE_* 配置，可用于接入 Kimi 等兼容�
 """
 
 from functools import cache
+from typing import TYPE_CHECKING
 
-from langchain_anthropic import ChatAnthropic
-from langchain_aws import ChatBedrock
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_google_vertexai import ChatVertexAI
-from langchain_groq import ChatGroq
-from langchain_ollama import ChatOllama
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 
 from core.settings import settings
@@ -31,6 +26,15 @@ from schema.models import (
     OpenRouterModelName,
     VertexAIModelName,
 )
+from tenancy.security import public_settings
+
+if TYPE_CHECKING or not public_settings().PUBLIC_DEMO:
+    from langchain_anthropic import ChatAnthropic
+    from langchain_aws import ChatBedrock
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_google_vertexai import ChatVertexAI
+    from langchain_groq import ChatGroq
+    from langchain_ollama import ChatOllama
 
 _MODEL_TABLE = (
     {m: m.value for m in OpenAIModelName}
@@ -72,6 +76,10 @@ type ModelT = (
 # Python functools.cache：复用相同模型选项的客户端，不缓存模型回答。
 @cache
 def get_model(model_name: AllModelEnum, /) -> ModelT:
+    if public_settings().PUBLIC_DEMO:
+        from tenancy.gateway import public_chat_model
+
+        return public_chat_model()
     # NOTE: models with streaming=True will send tokens as they are generated
     # if the /stream endpoint is called with stream_tokens=True (the default)
     api_model_name = _MODEL_TABLE.get(model_name)

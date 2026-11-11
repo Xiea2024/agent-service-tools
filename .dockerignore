@@ -29,6 +29,10 @@ venv
 *.db
 privatecredentials/*
 privatecredentials
+docker/tls
+docker/secrets
+backups
+*.dump
 .streamlit
 .aws
 .codex

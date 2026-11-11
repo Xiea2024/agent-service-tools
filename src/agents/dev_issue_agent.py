@@ -87,10 +87,38 @@ async def respond(state: DevIssueState, config: RunnableConfig) -> DevIssueState
     """模型选择是否调用工具；有结果时再次运行同一节点，生成带出处的回答。"""
     # RunnableConfig 由 API 传入：优先使用页面所选模型，未指定时使用项目默认模型。
     model_name = config.get("configurable", {}).get("model", settings.DEFAULT_MODEL)
-    model = get_model(model_name).bind_tools(tools)
+    from tenancy.security import public_settings
+
+    model = None
+    if not public_settings().PUBLIC_DEMO:
+        model = get_model(model_name).bind_tools(tools)
     # SystemMessage 只用于本次模型输入，不写入 checkpoint，避免每轮重复保存 Prompt。
     messages = [SystemMessage(content=DEV_ISSUE_PROMPT), *state["messages"]]
+    if public_settings().PUBLIC_DEMO:
+        from fastapi import HTTPException
+        from langchain_core.messages import trim_messages
+
+        from tenancy.api import current_principal
+        from tenancy.gateway import public_chat_model
+
+        principal = current_principal()
+        if not principal:
+            raise HTTPException(401, "请先登录")
+        model = public_chat_model().bind_tools(tools)
+        messages = trim_messages(
+            messages,
+            max_tokens=12000,
+            # UTF-8 bytes bound token count conservatively for any byte-level tokenizer.
+            token_counter=lambda items: sum(
+                len(m.model_dump_json().encode("utf-8")) for m in items
+            ),
+            strategy="last",
+            start_on="human",
+            include_system=True,
+            allow_partial=False,
+        )
     remaining = state.get("deadline", monotonic() + 60) - monotonic()
+    assert model is not None
     if remaining <= 0:
         return {"messages": [AIMessage(content="本轮处理已超时，暂时无法完成回答，请稍后重试。")]}
     try:

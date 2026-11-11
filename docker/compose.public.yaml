@@ -1,0 +1,117 @@
+name: supportpilot-public
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Required}
+      POSTGRES_DB: postgres
+      APP_DB_PASSWORD: ${POSTGRES_PASSWORD:?Required}
+      GATEWAY_DB_PASSWORD: ${GATEWAY_DB_PASSWORD:?Required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-public-db.sh:/docker-entrypoint-initdb.d/init-public-db.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: [redis-server, --appendonly, 'yes', --maxmemory, 128mb, --maxmemory-policy, noeviction]
+    volumes: [redis_data:/data]
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    restart: unless-stopped
+    volumes: [qdrant_data:/qdrant/storage]
+  litellm:
+    image: ${LITELLM_IMAGE:-ghcr.io/berriai/litellm:v1.108.4}
+    restart: unless-stopped
+    env_file: ../.env.gateway
+    command: [--config, /app/config.yaml, --port, '4000', --num_workers, '1']
+    environment:
+      DATABASE_URL: postgresql://sp_gateway:${GATEWAY_DB_PASSWORD:?Required}@postgres:5432/litellm
+    volumes: ['./litellm.yaml:/app/config.yaml:ro']
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+  backend:
+    image: ${SUPPORTPILOT_IMAGE_PREFIX:-supportpilot}-backend-public:${IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.public
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: '8080'
+      MODE: prod
+      PUBLIC_DEMO: 'true'
+      TENANT_MODE: 'true'
+      TENANT_COOKIE_SECURE: 'true'
+      DATABASE_TYPE: postgres
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: sp_app
+      POSTGRES_DB: supportpilot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Required}
+      POSTGRES_PORT: '5432'
+      QDRANT_URL: http://qdrant:6333
+      GATEWAY_URL: http://litellm:4000
+      GATEWAY_MASTER_KEY: ${GATEWAY_MASTER_KEY:?Required}
+      GATEWAY_ENCRYPTION_KEY: ${GATEWAY_ENCRYPTION_KEY:?Required}
+      PUBLIC_HOST: ${PUBLIC_HOST:?Required}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Required}
+      REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-false}
+      DEMO_TENANT_ID: ${DEMO_TENANT_ID:-}
+      SECURITY_REDIS_URL: ${SECURITY_REDIS_URL:-redis://redis:6379/0}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      DEMO_EMBEDDING_DIMENSION: ${DEMO_EMBEDDING_DIMENSION:-1024}
+      DEMO_DAILY_QUESTIONS: ${DEMO_DAILY_QUESTIONS:-10}
+      DEMO_GLOBAL_DAILY_QUESTIONS: ${DEMO_GLOBAL_DAILY_QUESTIONS:-60}
+      DEMO_GLOBAL_CONCURRENCY: ${DEMO_GLOBAL_CONCURRENCY:-3}
+      DEMO_DAILY_ACTIVATIONS: ${DEMO_DAILY_ACTIVATIONS:-30}
+      DEMO_DAILY_EMAILS: ${DEMO_DAILY_EMAILS:-80}
+      DEMO_KEY_DAILY_BUDGET: ${DEMO_KEY_DAILY_BUDGET:-0.1}
+      PAID_CALLS_ENABLED: ${PAID_CALLS_ENABLED:-true}
+      DEFAULT_MODEL: openai-compatible
+      COMPATIBLE_API_KEY: gateway-context-only
+      EMBEDDING_API_KEY: gateway-context-only
+      LANGCHAIN_TRACING_V2: 'false'
+      LANGFUSE_TRACING: 'false'
+      COMPATIBLE_BASE_URL: http://litellm:4000/v1
+      COMPATIBLE_MODEL: demo-chat
+      EMBEDDING_BASE_URL: http://litellm:4000/v1
+      EMBEDDING_MODEL: demo-embedding
+    volumes: [app_data:/app/.local]
+    depends_on:
+      postgres:
+        condition: service_healthy
+  web:
+    image: ${SUPPORTPILOT_IMAGE_PREFIX:-supportpilot}-web:${IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+    restart: unless-stopped
+  nginx:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    ports: ['80:80', '443:443']
+    volumes:
+      - ./nginx.public.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./tls:/etc/nginx/tls:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      web:
+        condition: service_started
+volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:
+  app_data:
