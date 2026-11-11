@@ -232,6 +232,7 @@ privatecredentials/*
 
 # Node dependencies and build metadata; keep package-lock.json versioned for CI.
 node_modules/
+frontend/dist-demo/
 *.tsbuildinfo
 
 # Live-app smoke test failure screenshot (scripts/smoke_live_app.py)

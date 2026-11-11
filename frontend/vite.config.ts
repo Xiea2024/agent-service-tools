@@ -17,8 +17,13 @@ export default defineConfig(({ mode }) => {
     },
   };
   return {
-    plugins: [react()],
-    server: { port: 5173, strictPort: true, proxy },
-    preview: { port: 4173, strictPort: true, proxy },
+    plugins: [react(), ...(mode === 'demo' ? [{
+      name: 'static-demo-metadata',
+      transformIndexHtml: (html: string) => html
+        .replace(/<title>.*?<\/title>/, '<title>SupportPilot · 静态交互演示</title>')
+        .replace(/(<meta name="description" content=")[^"]*(")/, '$1SupportPilot 研发排查工作台：预录问答、模拟流式输出与知识库引用。演示账号 guest / guest。$2'),
+    }] : [])],
+    server: { port: 5173, strictPort: true, proxy: mode === 'demo' ? undefined : proxy },
+    preview: { port: 4173, strictPort: true, proxy: mode === 'demo' ? undefined : proxy },
   };
 });

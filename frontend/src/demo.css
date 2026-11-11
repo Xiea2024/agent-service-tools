@@ -1,0 +1,7 @@
+.demo-bar { min-height:52px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 20px; background:#eef4ee; border-bottom:1px solid #dce6de; font-size:12px; color:#385346; }
+.demo-bar span { flex:1; }.demo-bar strong { color:#216b54; }
+.demo-bar button { border:1px solid #bdcfc3; background:white; border-radius:8px; padding:7px 12px; cursor:pointer; color:#216b54; white-space:nowrap; }
+.demo-shell .workspace { height:calc(100dvh - 54px); }
+.demo-login small { display:block; margin-top:20px; line-height:1.8; color:#66786c; }
+.demo-pill { display:inline-block; border:1px solid #bdcfc3; padding:5px 9px; border-radius:20px; font-size:12px; color:#216b54; }
+@media(max-width:650px) { .demo-bar { height:82px; padding:8px 12px; gap:6px; }.demo-bar span { line-height:1.8; }.demo-shell .workspace { height:calc(100dvh - 82px); } }

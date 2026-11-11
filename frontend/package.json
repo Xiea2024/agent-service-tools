@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:demo": "vite --mode demo --host 127.0.0.1",
+    "build:demo": "tsc -b && vite build --mode demo --base=./ --outDir=dist-demo",
+    "preview:demo": "vite preview --mode demo --outDir=dist-demo --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run"

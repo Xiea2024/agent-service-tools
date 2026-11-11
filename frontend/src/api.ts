@@ -1,4 +1,6 @@
 /** 对齐 FastAPI 的 ChatMessage / SSE 协议；网络分包不等于消息边界。 */
+import { STATIC_DEMO } from './demo-mode';
+import { demoRequest, demoStream } from './demo';
 export const AGENT = 'dev-issue-agent';
 let selectedTenant = '';
 export function selectTenant(id: string) { selectedTenant = id; }
@@ -38,6 +40,7 @@ export type StreamEvent =
   | { type: 'error'; content: string };
 
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  if (STATIC_DEMO) return demoRequest<T>(path, init);
   const response = await fetch(`/api${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...tenantHeaders(), ...init.headers },
@@ -115,6 +118,7 @@ export async function streamAnswer(
   signal: AbortSignal,
   onEvent: (event: StreamEvent) => void,
 ) {
+  if (STATIC_DEMO) return demoStream(input, signal, onEvent);
   const response = await fetch(`/api/${AGENT}/stream`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...tenantHeaders() },
     body: JSON.stringify({ ...input, stream_tokens: true }), signal,

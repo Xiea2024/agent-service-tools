@@ -99,6 +99,12 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - run: npm run build:demo
+      - uses: actions/upload-artifact@v6
+        with:
+          name: static-demo
+          path: frontend/dist-demo/
+          retention-days: 14
       - uses: actions/upload-artifact@v6
         with:
           name: frontend-dist

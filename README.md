@@ -6,6 +6,8 @@
 
 公网演示使用独立 NGINX + LiteLLM 栈，支持邮箱验证注册和演示额度。详见[阿里云部署](docs/aliyun-deployment.md)与[安全验证记录](docs/security-validation.md)。
 
+只展示界面和完整问答流程时，可用[零后端静态演示](docs/static-demo.md)：`cd frontend && npm run dev:demo`，账号密码均为 `guest`，无需服务器或模型密钥。
+
 React 网页工作台支持提问、流式回答、历史会话和文档证据展示，本地启动见 [frontend/README.md](frontend/README.md)。
 
 面向研发问题排查的飞书 Agent：结合用户描述和已导入的知识文档，补充复现信息、提供带出处的排查建议，并整理开发者交接报告。

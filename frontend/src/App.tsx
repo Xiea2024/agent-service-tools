@@ -57,7 +57,7 @@ function AnswerFeedback({ runId }: { runId: string }) {
   return <span>{state || <><button className="text-button" onClick={() => void submit(true)}>有帮助</button><button className="text-button" onClick={() => void submit(false)}>需改进</button></>}</span>;
 }
 
-export default function App({ identity, tenantMode = false }: { identity?: string; tenantMode?: boolean } = {}) {
+export default function App({ identity, tenantMode = false, demoMode = false }: { identity?: string; tenantMode?: boolean; demoMode?: boolean } = {}) {
   const [user] = useState(() => identity || browserUser());
   const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [model, setModel] = useState('');
@@ -172,7 +172,7 @@ export default function App({ identity, tenantMode = false }: { identity?: strin
     } catch (cause) {
       const stopped = controller.signal.aborted && !timedOut;
       update(turn => ({ ...turn, status: stopped ? 'stopped' : 'error', error: stopped
-        ? '已停止接收。后端可能仍在执行，请稍后刷新历史确认结果。'
+        ? demoMode ? '模拟输出已停止，可刷新历史查看已生成的片段。' : '已停止接收。后端可能仍在执行，请稍后刷新历史确认结果。'
         : timedOut ? '等待回答超时。后端可能仍在执行，请稍后刷新历史确认结果。' : messageOf(cause) }));
     } finally {
       clearTimeout(timeout);
@@ -200,7 +200,7 @@ export default function App({ identity, tenantMode = false }: { identity?: strin
   return <div className={`workspace ${evidenceOpen ? '' : 'without-evidence'}`}>
     {sidebarOpen && <button className="drawer-backdrop" aria-label="关闭会话列表" onClick={() => setSidebarOpen(false)} />}
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-visible' : ''}`}>
-      <a className="brand" href="/" aria-label="SupportPilot 首页"><span className="brand-icon"><Command size={21} /></span><span>SupportPilot<small>研发排查工作台</small></span></a>
+      <a className="brand" href={demoMode ? import.meta.env.BASE_URL : "/"} aria-label="SupportPilot 首页"><span className="brand-icon"><Command size={21} /></span><span>SupportPilot<small>研发排查工作台</small></span></a>
       <button className="new-chat" disabled={locked} onClick={newChat}><Plus size={17} />发起新的排查<span>↗</span></button>
       <div className="nav-label"><History size={14} />历史会话<button className="icon-button" title="刷新会话列表" aria-label="刷新会话列表" disabled={locked || connecting} onClick={() => void refreshThreads().catch(cause => setError(messageOf(cause)))}><RefreshCw size={13} /></button></div>
       <label className="search-box"><Search size={14} /><input aria-label="搜索历史会话" placeholder="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /><kbd>⌕</kbd></label>
@@ -222,7 +222,7 @@ export default function App({ identity, tenantMode = false }: { identity?: strin
       <header className="topbar">
         <button className="icon-button mobile-menu" aria-label="打开会话列表" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button>
         <div className="breadcrumb"><span>工作台</span><ChevronRight size={13} /><strong>研发问题排查</strong></div>
-        <div className="header-actions"><span className={`connection ${connected ? 'online' : ''}`}><i />{connecting ? '连接中' : connected ? '服务已连接' : '服务未连接'}</span><span className="header-divider" /><button className="icon-button" aria-label={evidenceOpen ? '收起证据面板' : '打开证据面板'} title="证据面板" onClick={() => setEvidenceOpen(!evidenceOpen)}>{evidenceOpen ? <PanelRightClose size={19} /> : <PanelRightOpen size={19} />}</button></div>
+        <div className="header-actions"><span className={`connection ${connected ? 'online' : ''}`}><i />{connecting ? '连接中' : connected ? demoMode ? '演示已就绪' : '服务已连接' : '服务未连接'}</span><span className="header-divider" /><button className="icon-button" aria-label={evidenceOpen ? '收起证据面板' : '打开证据面板'} title="证据面板" onClick={() => setEvidenceOpen(!evidenceOpen)}>{evidenceOpen ? <PanelRightClose size={19} /> : <PanelRightOpen size={19} />}</button></div>
       </header>
       <div className="conversation-bar"><span className="conversation-title"><MessageSquare size={15} />{currentTitle}</span><button className="text-button" disabled={locked || !turns.length} onClick={() => void loadThread(threadId)}><RefreshCw size={13} />刷新历史</button></div>
       {error && <div className="banner error" role="alert"><span>{error}</span>{!connected ? <button disabled={connecting} onClick={() => setBootKey(key => key + 1)}>重新连接</button> : <button aria-label="关闭错误提示" onClick={() => setError('')}><X size={15} /></button>}</div>}
@@ -256,7 +256,7 @@ export default function App({ identity, tenantMode = false }: { identity?: strin
                 {turn.status === 'streaming' && <div className="stream-status" role="status"><span className="pulse-dots"><i /><i /><i /></span>{activity}</div>}
                 {turn.error && <div className={`turn-error ${turn.status === 'stopped' ? 'stopped' : ''}`} role="alert">{turn.error}</div>}
                 {turn.status === 'complete' && !answer && !turn.draft && <div className="turn-error">本轮没有返回文字回答，请刷新历史确认结果。</div>}
-                {turn.status !== 'streaming' && (answer || turn.draft) && <div className="answer-footer"><CopyAnswer text={[answer, turn.draft].filter(Boolean).join('\n\n')} />{runId && <span title={runId}>运行 {runId.slice(0, 8)}</span>}{tenantMode && runId && turn.status === 'complete' && <AnswerFeedback runId={runId} />}</div>}
+                {turn.status !== 'streaming' && (answer || turn.draft) && <div className="answer-footer"><CopyAnswer text={[answer, turn.draft].filter(Boolean).join('\n\n')} />{runId && <span title={runId}>运行 {runId.slice(0, 8)}</span>}{(tenantMode || demoMode) && runId && turn.status === 'complete' && <AnswerFeedback runId={runId} />}</div>}
               </div></div>
             </section>;
           })}
@@ -275,7 +275,7 @@ export default function App({ identity, tenantMode = false }: { identity?: strin
         <div className="evidence-intro"><span className="section-kicker">CONTEXT, NOT GUESSWORK</span><p>查看本轮检索到的资料，<br />让每一条建议都有迹可循。</p></div>
         {evidenceTurn && <div className="evidence-selection"><span>当前问题</span><p>{evidenceTurn.question}</p><small>点击回答中的工具记录可查看其他轮次。</small></div>}
         <div className="section-title"><span>工具记录</span><span>{tools.length ? `${tools.length} 次调用` : '等待调用'}</span></div>
-        {tools.length ? <div className="tool-list">{tools.map(tool => <div className="tool-record" key={tool.id}><span className={`tool-state ${tool.result?.status || (evidenceTurn?.status === 'streaming' ? 'pending' : 'unknown')}`}>{!tool.result && evidenceTurn?.status === 'streaming' ? <LoaderCircle size={13} className="spin" /> : tool.result?.status === 'ok' ? <Check size={13} /> : <Search size={13} />}</span><div><strong>{tool.call?.name === 'search_feishu_documents' ? '搜索飞书文档' : tool.call?.name || '文档检索结果'}</strong>{tool.call?.args.query != null && <p>{String(tool.call.args.query)}</p>}<small>{tool.result?.message || (evidenceTurn?.status === 'streaming' ? '正在等待结果…' : '未收到工具结果')}</small></div></div>)}</div> : <div className="quiet-card"><Search size={17} /><p>{evidenceTurn ? '本轮尚无工具记录。普通问答可能无需检索。' : '需要文档依据时，助手会检索已导入的知识库。'}</p></div>}
+        {tools.length ? <div className="tool-list">{tools.map(tool => <div className="tool-record" key={tool.id}><span className={`tool-state ${tool.result?.status || (evidenceTurn?.status === 'streaming' ? 'pending' : 'unknown')}`}>{!tool.result && evidenceTurn?.status === 'streaming' ? <LoaderCircle size={13} className="spin" /> : tool.result?.status === 'ok' ? <Check size={13} /> : <Search size={13} />}</span><div><strong>{tool.call?.name === 'search_feishu_documents' ? demoMode ? '文档检索（预录）' : '搜索飞书文档' : tool.call?.name || '文档检索结果'}</strong>{tool.call?.args.query != null && <p>{String(tool.call.args.query)}</p>}<small>{tool.result?.message || (evidenceTurn?.status === 'streaming' ? '正在等待结果…' : '未收到工具结果')}</small></div></div>)}</div> : <div className="quiet-card"><Search size={17} /><p>{evidenceTurn ? '本轮尚无工具记录。普通问答可能无需检索。' : '需要文档依据时，助手会检索已导入的知识库。'}</p></div>}
         <div className="section-title source-title"><span>文档片段</span><span>{evidence.length} 条证据</span></div>
         {evidence.length ? evidence.map((hit, index) => <article className="evidence-card" key={hit.chunk_id}>
           <div className="source-number"><span><FileText size={12} />来源 {String(index + 1).padStart(2, '0')}</span>{typeof hit.score === 'number' && Number.isFinite(hit.score) && <small title="向量相似度，不代表答案正确率">相似度 {hit.score.toFixed(3)}</small>}</div>
@@ -286,6 +286,6 @@ export default function App({ identity, tenantMode = false }: { identity?: strin
       <div className="evidence-foot"><ShieldCheck size={14} /><span>资料用于辅助判断，不能单独证明故障根因。</span></div>
     </aside>}
 
-    {showHelp && <div className="modal-backdrop" onClick={() => setShowHelp(false)}><section role="dialog" aria-modal="true" aria-labelledby="help-title" className="help-modal" onClick={event => event.stopPropagation()}><button autoFocus className="icon-button modal-close" aria-label="关闭使用说明" onClick={() => setShowHelp(false)}><X size={20} /></button><span className="welcome-mark"><Command size={26} /></span><h2 id="help-title">你的研发排查工作台</h2><p>输入问题开始排查，左侧继续历史对话，右侧核对文档证据。</p><p>{tenantMode ? '会话按团队和登录账号保存，仅本人可见；知识库由当前团队共享。切换团队后会打开对应的独立工作空间。' : '此浏览器保存匿名用户编号，会话内容由后端 checkpoint 保存。清除浏览器数据后，历史列表将使用新身份。'}</p><label className="identity-label">当前网页身份<code>{user}</code></label><p className="muted">{tenantMode ? '团队管理员可在顶部管理成员和导入知识库。' : '当前为本地工作台，共享 API 认证不提供完整的多用户权限隔离。'}</p><button className="primary-button" onClick={() => setShowHelp(false)}>开始排查<ArrowRight size={16} /></button></section></div>}
+    {showHelp && <div className="modal-backdrop" onClick={() => setShowHelp(false)}><section role="dialog" aria-modal="true" aria-labelledby="help-title" className="help-modal" onClick={event => event.stopPropagation()}><button autoFocus className="icon-button modal-close" aria-label="关闭使用说明" onClick={() => setShowHelp(false)}><X size={20} /></button><span className="welcome-mark"><Command size={26} /></span><h2 id="help-title">你的研发排查工作台</h2><p>输入问题开始排查，左侧继续历史对话，右侧核对文档证据。</p><p>{demoMode ? '演示会话和反馈仅保存在当前标签页的浏览器存储中，不会发送到服务器。所有回答与引用均为预录示例。' : tenantMode ? '会话按团队和登录账号保存，仅本人可见；知识库由当前团队共享。切换团队后会打开对应的独立工作空间。' : '此浏览器保存匿名用户编号，会话内容由后端 checkpoint 保存。清除浏览器数据后，历史列表将使用新身份。'}</p><label className="identity-label">当前网页身份<code>{user}</code></label><p className="muted">{demoMode ? '请从首页三个预设案例开始，或继续左侧的示例会话。' : tenantMode ? '团队管理员可在顶部管理成员和导入知识库。' : '当前为本地工作台，共享 API 认证不提供完整的多用户权限隔离。'}</p><button className="primary-button" onClick={() => setShowHelp(false)}>开始排查<ArrowRight size={16} /></button></section></div>}
   </div>;
 }

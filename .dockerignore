@@ -5,6 +5,7 @@
 !.env.example
 **/node_modules
 **/dist
+**/dist-demo
 .local
 .tmp
 .pytest_cache
