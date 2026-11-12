@@ -14,6 +14,8 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from client import AgentClient
+from harness.attribution import STAGE_ORDER, attribute
+from harness.attribution import summarize as summarize_attribution
 from schema import ChatMessage
 
 
@@ -170,6 +172,15 @@ def check_turn(
             set(turn.expected_document_ids).issubset(actual),
             f"预期文档 {turn.expected_document_ids}；实际 {sorted(str(v) for v in actual)}",
         )
+    if hits and (turn.retrieval == "required" or turn.expected_document_ids):
+        # 案例要求证据时，“命中但没引用”是一个独立失败点：它不是检索问题，
+        # 也不是生成问题，而是证据到回答之间的断裂，归因时单独记为 evidence。
+        cited = urls(answer) & {hit.get("source_url") for hit in hits}
+        check(
+            "evidence_cited",
+            bool(cited),
+            f"命中 {len(hits)} 段，回答引用了其中 {len(cited)} 个来源",
+        )
     allowed_urls.update(hit["source_url"] for hit in hits)
     unsupported = urls(answer) - allowed_urls
     check("source_urls", not unsupported, f"没有证据支持的链接：{sorted(unsupported)}")
@@ -207,10 +218,15 @@ async def evaluate_turn(
     except Exception as exc:
         error = {"type": type(exc).__name__, "message": str(exc)}
     checks, evidence, answer = check_turn(turn, messages, allowed_urls)
-    return {
+    run_id = next((message.run_id for message in messages if message.run_id), None)
+    # 观测缺失不阻塞评测：旧服务版本或进程重启后这里会拿到空列表。
+    fetch_stages = getattr(client, "astages", None)
+    fetched = await fetch_stages(run_id) if run_id and fetch_stages else []
+    stages = [record for record in fetched or [] if isinstance(record, dict)]
+    result = {
         "message": turn.message,
         "thread_id": thread_id,
-        "run_id": next((message.run_id for message in messages if message.run_id), None),
+        "run_id": run_id,
         "started_at": started_at,
         "duration_seconds": round(perf_counter() - started, 3),
         "status": "error" if error else "passed" if all(c["passed"] for c in checks) else "failed",
@@ -218,9 +234,13 @@ async def evaluate_turn(
         "messages": [message.model_dump() for message in messages],
         "evidence": evidence,
         "checks": checks,
+        "stages": stages,
         "error": error,
         "quality_review": {"status": "pending", "rubric": turn.rubric, "notes": ""},
     }
+    # 归因只读上面这份结果，不调用模型，因此同一份输入永远得到同一个结论。
+    result["attribution"] = attribute(turn, result)
+    return result
 
 
 def save_json(path: Path, value: Any) -> None:
@@ -247,6 +267,8 @@ def summary(manifest: dict[str, Any], results: list[dict[str, Any]]) -> dict[str
         "case_pass_rate": passed_cases / manifest["total_cases"],
         "quality_review_pending": len(results),
         "duration_seconds": round(sum(r["duration_seconds"] for r in results), 3),
+        # 阶段归因：失败轮次落在 route/retrieve/evidence/generate/verify 的哪一步。
+        **summarize_attribution(results),
     }
 
 
@@ -274,15 +296,30 @@ def write_report(output_dir: Path, manifest: dict[str, Any], results: list[dict[
         "- 答案质量：待人工复核。自动规则通过率不代表答案正确率。",
         "- 原始数据：results.jsonl；案例快照：cases.json；运行信息：manifest.json。",
         "",
-        "## 结果明细",
+        "## 失败归因",
+        "",
+        "按流水线顺序取第一个失败点：route → retrieve → evidence → generate → verify。"
+        "归因只用确定性证据，不调用模型判断；无法归因的轮次单独记为 unattributed。",
         "",
     ]
+    stage_failures = data["stage_failures"]
+    if not stage_failures:
+        lines.append("- 本轮没有被归因到具体阶段的失败轮次。")
+    else:
+        lines.append("| 阶段 | 失败轮次 |")
+        lines.append("| --- | --- |")
+        for name in STAGE_ORDER + ("unattributed",):
+            if stage_failures.get(name):
+                lines.append(f"| {name} | {stage_failures[name]} |")
+    lines.extend(["", "## 结果明细", ""])
     for result in results:
         lines.extend(
             [
                 f"### {result['case_id']} · {result['title']} · 第 {result['turn_index']} 轮",
                 "",
                 f"状态：{result['status']}；耗时：{result['duration_seconds']} 秒",
+                f"归因：{result.get('attribution', {}).get('stage', '未记录')}"
+                f" · {result.get('attribution', {}).get('reason', '')}",
                 f"thread_id：{result['thread_id']}",
                 f"run_id：{result['run_id'] or '未返回'}",
                 "",

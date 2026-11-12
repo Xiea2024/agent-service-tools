@@ -3,26 +3,43 @@
 LangGraph 管理消息状态与单轮执行，LangChain 消息和模型接口连接已有 LLM Provider。
 通过 ToolNode 检索已入库的飞书文档，将真实正文与出处交回模型组织回答。
 历史 Issue、日志解析与检查工具待接入；每轮限制检索轮数与总耗时。
+
+本轮新增按阶段的观测记录（observability.stages）：route / retrieve / evidence /
+generate / verify。记录只写低基数决策字段，不写问题与回答正文，也不改变图的
+执行路径——去掉这些记录后回答行为完全一致。
 """
 
 import asyncio
+import json
+import re
+from collections.abc import Iterable
 from time import monotonic
+from typing import Any
 
-from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
+from agents.route_rules import classify_intent
 from core import get_model, settings
 from document_retrieval import search_feishu_documents
 from observability.metrics import operation
+from observability.stages import EVIDENCE, GENERATE, ROUTE, VERIFY, stage
 
 
 class DevIssueState(MessagesState, total=False):
-    """消息仍由 checkpoint 保存；计数与截止时间在每次新请求开始时重置。"""
+    """消息仍由 checkpoint 保存；计数与截止时间在每次新请求开始时重置。
+
+    retrieval_* 三个字段是本轮工具实际返回的片段标识、来源链接和分数，只用于
+    evidence / verify 两个阶段的记录，不进入模型上下文。
+    """
 
     tool_rounds: int
     deadline: float
+    retrieval_hit_ids: list[str]
+    retrieval_urls: list[str]
+    retrieval_scores: list[float]
 
 
 tools = [search_feishu_documents]
@@ -77,10 +94,106 @@ status=no_results 时说明当前未找到足够相关资料；status=error 时�
 不建议通过关闭证书校验、删除数据或修改生产配置来绕过尚未定位的问题。
 """
 
+# 与 evaluation.check_turn 的链接规则保持同一口径，但服务端这里只做粗判：
+# 权威判定仍在评测器里（它还校验工具返回结构和 run_id 一致性）。
+_URL = re.compile(r"https?://[^\s<>\]\)\"']+")
 
-def prepare_turn(state: DevIssueState) -> DevIssueState:
-    """每次用户请求重新预算；65 秒小于飞书默认 75 秒的等待窗口。"""
-    return {"messages": [], "tool_rounds": 0, "deadline": monotonic() + 65}
+
+def _urls(text: str) -> set[str]:
+    return {value.rstrip(".,;，。；") for value in _URL.findall(text or "")}
+
+
+def _last_human_text(state: DevIssueState) -> str:
+    for message in reversed(state.get("messages", [])):
+        if isinstance(message, HumanMessage):
+            return message.content if isinstance(message.content, str) else ""
+    return ""
+
+
+def _collect_hits(messages: Iterable[Any]) -> tuple[list[str], list[str], list[float]]:
+    """从工具结果里取出片段标识、出处和分数；格式不符就跳过，不影响回答。"""
+    hit_ids: list[str] = []
+    urls: list[str] = []
+    scores: list[float] = []
+    for message in messages:
+        if not isinstance(message, ToolMessage):
+            continue
+        content = message.content
+        if not isinstance(content, str):
+            continue
+        try:
+            payload = json.loads(content)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        hits = payload.get("hits")
+        if not isinstance(hits, list):
+            continue
+        for hit in hits:
+            if not isinstance(hit, dict) or not isinstance(hit.get("chunk_id"), str):
+                continue
+            hit_ids.append(hit["chunk_id"])
+            if isinstance(hit.get("source_url"), str):
+                urls.append(hit["source_url"])
+            if isinstance(hit.get("score"), int | float):
+                scores.append(float(hit["score"]))
+    return hit_ids, urls, scores
+
+
+def _record_evidence(state: DevIssueState, config: RunnableConfig, answer: str) -> None:
+    """命中片段是否被回答真正引用；这是“有资料”和“用了资料”之间的分界。"""
+    hit_urls = set(state.get("retrieval_urls", []))
+    cited = _urls(answer) & hit_urls
+    with stage(EVIDENCE, config=config) as observed:
+        observed["hits"] = len(hit_urls)
+        observed["cited"] = len(cited)
+        if hit_urls and not cited:
+            observed["outcome"] = "unused_hits"
+
+
+def _record_verify(
+    state: DevIssueState,
+    config: RunnableConfig,
+    answer: str,
+    *,
+    budget_exhausted: bool = False,
+    skipped: bool = False,
+) -> None:
+    """回答自检：无依据链接与预算耗尽。不校验答案是否正确，那需要人工或评测器。"""
+    with stage(VERIFY, config=config) as observed:
+        observed["answer_chars"] = len(answer or "")
+        observed["hits"] = len(set(state.get("retrieval_urls", [])))
+        if skipped:
+            observed["outcome"] = "skipped"
+            return
+        if budget_exhausted:
+            observed["outcome"] = "budget_exhausted"
+            return
+        allowed = set(state.get("retrieval_urls", [])) | _urls(_last_human_text(state))
+        unsupported = _urls(answer) - allowed
+        observed["unsupported_urls"] = len(unsupported)
+        if unsupported:
+            observed["outcome"] = "unsupported_citation"
+
+
+def prepare_turn(state: DevIssueState, config: RunnableConfig) -> DevIssueState:
+    """每次用户请求重新预算；65 秒小于飞书默认 75 秒的等待窗口。
+
+    同时记录 route 阶段：这一版只用确定性规则旁路判断，不改变图的走向，
+    因此它给出的 intent 可以作为归因时的对照基线（Iter 2 才由 router 消费）。
+    """
+    decision = classify_intent(_last_human_text(state))
+    with stage(ROUTE, config=config) as observed:
+        observed.update(decision.as_decisions())
+    return {
+        "messages": [],
+        "tool_rounds": 0,
+        "deadline": monotonic() + 65,
+        "retrieval_hit_ids": [],
+        "retrieval_urls": [],
+        "retrieval_scores": [],
+    }
 
 
 async def respond(state: DevIssueState, config: RunnableConfig) -> DevIssueState:
@@ -120,23 +233,39 @@ async def respond(state: DevIssueState, config: RunnableConfig) -> DevIssueState
     remaining = state.get("deadline", monotonic() + 60) - monotonic()
     assert model is not None
     if remaining <= 0:
-        return {"messages": [AIMessage(content="本轮处理已超时，暂时无法完成回答，请稍后重试。")]}
+        with stage(GENERATE, config=config) as observed:
+            observed["model"] = str(model_name)
+            observed["outcome"] = "budget_exhausted"
+        message = "本轮处理已超时，暂时无法完成回答，请稍后重试。"
+        _record_verify(state, config, message, budget_exhausted=True)
+        return {"messages": [AIMessage(content=message)]}
     try:
         # 总窗口覆盖模型→工具→模型，避免每个模型节点各等 60 秒而让飞书先超时。
         with operation("model"):
             async with asyncio.timeout(min(60, remaining)):
-                response = await model.ainvoke(messages, config)
+                with stage(GENERATE, config=config) as observed:
+                    observed["model"] = str(model_name)
+                    response = await model.ainvoke(messages, config)
+                    if isinstance(response, AIMessage):
+                        observed["tool_calls"] = len(response.tool_calls)
+                        content = response.content
+                        observed["chars"] = len(content) if isinstance(content, str) else 0
     except TimeoutError:
-        return {"messages": [AIMessage(content="本轮模型响应超时，请稍后重试。")]}
+        message = "本轮模型响应超时，请稍后重试。"
+        _record_verify(state, config, "", skipped=True)
+        return {"messages": [AIMessage(content=message)]}
     if not isinstance(response, AIMessage):
         raise TypeError("聊天模型应返回 AIMessage")
     if response.tool_calls and (state.get("tool_rounds", 0) >= 2 or len(response.tool_calls) > 1):
         # 丢弃尚未执行的新工具请求，返回普通 AIMessage，不把悬空 tool_call 存入历史。
-        return {
-            "messages": [
-                AIMessage(content="已达到本轮检索预算，请缩小问题范围后继续；当前无法确认结论。")
-            ]
-        }
+        message = "已达到本轮检索预算，请缩小问题范围后继续；当前无法确认结论。"
+        _record_verify(state, config, message, budget_exhausted=True)
+        return {"messages": [AIMessage(content=message)]}
+    if not response.tool_calls:
+        # 只有真正收尾的那次模型调用才评价“命中是否被引用”，工具循环中的中间回答不评价。
+        answer = response.content if isinstance(response.content, str) else ""
+        _record_evidence(state, config, answer)
+        _record_verify(state, config, answer)
     # MessagesState 的 reducer 合并消息；本轮只返回增量，历史由服务的 checkpointer 提供。
     return {"messages": [response]}
 
@@ -164,7 +293,14 @@ async def run_tools(state: DevIssueState, config: RunnableConfig) -> DevIssueSta
                 for call in last.tool_calls
             ]
         }
-    return {"messages": result["messages"], "tool_rounds": state.get("tool_rounds", 0) + 1}
+    hit_ids, urls, scores = _collect_hits(result["messages"])
+    return {
+        "messages": result["messages"],
+        "tool_rounds": state.get("tool_rounds", 0) + 1,
+        "retrieval_hit_ids": [*state.get("retrieval_hit_ids", []), *hit_ids],
+        "retrieval_urls": [*state.get("retrieval_urls", []), *urls],
+        "retrieval_scores": [*state.get("retrieval_scores", []), *scores],
+    }
 
 
 # 条件边读取 AIMessage.tool_calls：有调用则执行工具，没有则结束。

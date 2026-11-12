@@ -36,6 +36,7 @@ from agents import DEFAULT_AGENT, AgentGraph, get_agent, get_all_agent_info, loa
 from core import settings
 from memory import initialize_database, initialize_store
 from observability.identifiers import trace_id_for
+from observability.stages import stages_for
 from observability.tracing import (
     get_tracing_client,
     shutdown_tracing,
@@ -633,6 +634,19 @@ async def threads(
         raise HTTPException(status_code=500, detail="Unexpected error")
 
     return UserThreads(threads=summaries)
+
+
+@router.get("/runs/{run_id}/stages")
+async def run_stages(run_id: str) -> dict[str, Any]:
+    """返回一轮问答的阶段记录，用于判断“哪一步开始出错”。
+
+    只包含阶段名、结果枚举、耗时、变体和数值型决策字段，不含问题与回答正文，
+    因此可以安全地给评测器、前端和排障人员读取。记录保存在服务进程内存中，
+    没有记录（进程重启、多副本、旧版本）时返回空列表而不是 404。
+    """
+    if not run_id or len(run_id) > 64:
+        raise HTTPException(status_code=422, detail="run_id 不合法")
+    return {"run_id": run_id, "stages": stages_for(run_id)}
 
 
 @app.get("/health")

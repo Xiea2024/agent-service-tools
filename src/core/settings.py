@@ -93,6 +93,9 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173"
     )
     METRICS_ENABLED: bool = False
+    # 变体标识：所有阶段指标都带这个标签，用于对比提示词/检索参数/模型的差异。
+    # 只接受小写短串，避免请求方注入任意字符串把标签基数打爆。
+    AGENT_VARIANT: str = Field(default="v1", pattern=r"^[a-z0-9][a-z0-9._-]{0,31}$")
 
     OPENAI_API_KEY: SecretStr | None = None
     DEEPSEEK_API_KEY: SecretStr | None = None

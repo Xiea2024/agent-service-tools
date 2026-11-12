@@ -115,6 +115,7 @@ docker compose -f docker/compose.qdrant.yaml up -d
 | [启动与运维](docs/getting-started.md) | 环境、配置、文档导入、启动顺序、查询与故障处理 |
 | [架构说明](docs/architecture.md) | 问答与评测调用路径、标识、存储和恢复策略 |
 | [运维操作](docs/operations.md) | 任务查询与恢复、索引冲突、报告发布和调用追踪 |
+| [阶段归因](docs/attribution.md) | 一轮问答的六个阶段、指标/接口/评测三处一致命名和归因规则 |
 | [业务扩展与贡献说明](docs/contributions.md) | 原框架与新增工作的边界、代码证据和设计取舍 |
 | [固定案例与评测](evals/supportpilot/README.md) | 案例结构、执行器和结果格式 |
 

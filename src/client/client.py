@@ -327,6 +327,31 @@ class AgentClient:
             except httpx.HTTPError as e:
                 raise AgentClientError(f"Error: {e}")
 
+    async def astages(self, run_id: str, timeout: float | None = None) -> list[dict[str, Any]]:
+        """读取一次运行的阶段记录，用于把失败归因到具体步骤。
+
+        观测是辅助信息：服务版本不支持该接口、记录已过期或网络失败时返回空列表，
+        不让一次评测因为观测缺失而失败。返回值由服务端保证不含问题与回答正文。
+        """
+        if not run_id:
+            return []
+        # 观测是旁路：服务版本不支持、记录已过期、代理返回非 JSON、甚至被测试替身
+        # 拦截了 httpx，都只应让归因缺数据，不应让一次评测失败。
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.base_url}/runs/{run_id}/stages",
+                    headers=self._headers,
+                    timeout=timeout or self.timeout or 5,
+                )
+                if response.status_code >= 400:
+                    return []
+                payload = response.json()
+        except Exception:  # 任何取观测失败的异常都不影响主流程
+            return []
+        stages = payload.get("stages") if isinstance(payload, dict) else None
+        return [stage for stage in stages or [] if isinstance(stage, dict)]
+
     async def acreate_feedback(
         self, run_id: str, key: str, score: float, kwargs: dict[str, Any] = {}
     ) -> None:

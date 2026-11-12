@@ -11,7 +11,7 @@ import logging
 import math
 from contextlib import closing
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.embeddings import Embeddings
 from langchain_core.runnables import RunnableConfig
@@ -22,6 +22,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from embedding_client import EmbeddingSettings, create_embedding_http_client, create_embeddings
 from observability.metrics import operation
+from observability.stages import RETRIEVE, stage
 
 if TYPE_CHECKING:
     from qdrant_client import QdrantClient
@@ -210,19 +211,32 @@ async def search_feishu_documents(query: str, config: RunnableConfig) -> dict:
     查询应包含问题现象与关键词；资料只是排查证据，不能证明当前故障根因。
     只搜索已入库文档，不会实时读取整个飞书知识库、搜索 Issue 或执行命令。
     """
-    with operation("retrieval") as measured:
-        from core import settings
+    # retrieve 阶段记录命中数、最高分与错误码；不记录查询原文与片段正文。
+    with stage(RETRIEVE, config=config) as observed:
+        result: dict[str, Any]
+        with operation("retrieval") as measured:
+            from core import settings
 
-        tenant_id = config.get("configurable", {}).get("tenant_id")
-        document_ids = config.get("configurable", {}).get("rag_document_ids")
-        if settings.TENANT_MODE and (not tenant_id or document_ids is None):
-            return {
-                "status": "error",
-                "error_code": "missing_tenant",
-                "message": "缺少可信团队上下文",
-                "hits": [],
-            }
-        return await _measured_search(query, measured, tenant_id, document_ids)
+            tenant_id = config.get("configurable", {}).get("tenant_id")
+            document_ids = config.get("configurable", {}).get("rag_document_ids")
+            if settings.TENANT_MODE and (not tenant_id or document_ids is None):
+                result = {
+                    "status": "error",
+                    "error_code": "missing_tenant",
+                    "message": "缺少可信团队上下文",
+                    "hits": [],
+                }
+                measured["outcome"] = "error"
+            else:
+                result = await _measured_search(query, measured, tenant_id, document_ids)
+        observed["outcome"] = measured["outcome"]
+        observed["hits"] = len(result["hits"])
+        observed["query_chars"] = len(query)
+        if result.get("error_code"):
+            observed["error_code"] = result["error_code"]
+        if result["hits"]:
+            observed["top_score"] = max(float(hit["score"]) for hit in result["hits"])
+        return result
 
 
 async def _measured_search(
