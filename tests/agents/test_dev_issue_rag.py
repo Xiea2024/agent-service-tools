@@ -36,6 +36,15 @@ def tool_call(index=1):
     )
 
 
+def delegated():
+    """supervisor 的一次委派响应。
+
+    没有 tool_calls 时 supervisor 按规则回退，这些用例的输入都会被判成文档类，
+    因此不需要精确构造 delegate 工具的调用；委派消息本身不会进入会话历史。
+    """
+    return AIMessage(content="委派给文档专家。")
+
+
 @pytest.fixture
 def rag_model(monkeypatch):
     model = Mock()
@@ -60,6 +69,7 @@ async def test_api_tool_result_reaches_model_and_final_answer(rag_model, monkeyp
     search = Mock(return_value=[hit])
     monkeypatch.setattr(document_retrieval, "search_documents", search)
     rag_model.ainvoke.side_effect = [
+        delegated(),
         tool_call(),
         AIMessage(content="参考[跨域说明](https://example.com/doc)。"),
     ]
@@ -74,7 +84,8 @@ async def test_api_tool_result_reaches_model_and_final_answer(rag_model, monkeyp
     assert response.status_code == 200
     assert "https://example.com/doc" in response.json()["content"]
     search.assert_called_once_with("跨域问题怎么排查")
-    second_input = rag_model.ainvoke.await_args_list[1].args[0]
+    # 下标 0 是 supervisor 委派，下标 2 才是拿到 ToolMessage 之后的第二次专家调用。
+    second_input = rag_model.ainvoke.await_args_list[2].args[0]
     tool_message = next(message for message in second_input if isinstance(message, ToolMessage))
     assert tool_message.tool_call_id == "call-1"
     assert json.loads(tool_message.content)["hits"][0]["content"] == hit.content
@@ -90,6 +101,7 @@ async def test_retrieval_failure_is_given_to_model_as_error(rag_model, monkeypat
         Mock(side_effect=RetrievalError("qdrant_unavailable", "知识库不可用。")),
     )
     rag_model.ainvoke.side_effect = [
+        delegated(),
         tool_call(),
         AIMessage(content="知识库暂时不可用，请稍后再试。"),
     ]
@@ -105,9 +117,11 @@ async def test_tool_loop_is_bounded_and_resets_on_next_turn(rag_model, monkeypat
     search = Mock(return_value=[])
     monkeypatch.setattr(document_retrieval, "search_documents", search)
     rag_model.ainvoke.side_effect = [
+        delegated(),
         tool_call(1),
         tool_call(2),
         tool_call(3),
+        delegated(),
         tool_call(4),
         AIMessage(content="暂无资料。"),
     ]

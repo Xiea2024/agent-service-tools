@@ -7,11 +7,11 @@
 
 | 阶段 | 记录时机 | 关键决策字段 | 归因含义 |
 | --- | --- | --- | --- |
-| `route` | 每轮请求开始 | `intent`、`needs_retrieval`、`matched_rule` | 该检索的没检索，或不该检索的检索了 |
-| `memory` | 预留 | — | 长期记忆召回（Iter 2 接入，本版不产生记录） |
+| `route` | supervisor 委派后 | `target`、`decided_by`、`model` | 委派错了专家，或该检索的没检索 |
+| `memory` | 预留 | — | 长期记忆召回（后续迭代接入，本版不产生记录） |
 | `retrieve` | 每次工具调用 | `hits`、`top_score`、`error_code`、`query_chars` | 检索失败、无命中、没命中应命中的文档 |
 | `evidence` | 收尾回答生成后 | `hits`、`cited` | 有命中但没被引用 |
-| `generate` | 每次模型调用 | `model`、`tool_calls`、`chars` | 超时、预算耗尽、没有产出可用回答 |
+| `generate` | 每次模型调用 | `branch`、`model`、`tool_calls`、`chars` | 超时、预算耗尽、没有产出可用回答 |
 | `verify` | 每轮结束 | `answer_chars`、`unsupported_urls` | 引用了没有出处的链接 |
 
 阶段名、结果枚举和指标标签都在 [`src/observability/stages.py`](../src/observability/stages.py) 中固定；
@@ -57,7 +57,31 @@ verify    run_id 不一致、工具请求与结果不配对、轮次超限、工
 - **解释不了就明说**。`unattributed` 会保留失败检查名，用来提醒“需要新增一条规则或人工复核”，
   而不是硬塞一个最像的阶段。
 
-## 5. 局限
+## 5. Supervisor 与两个专家
+
+图里有三个 Agent，共用一个 checkpointer 和一套阶段埋点：
+
+```text
+START → prepare → supervisor ─┬→ doc_expert ⇄ tools   (检索 + 回答)
+                              └→ log_expert           (log_facts 解析 + 单次解释)
+```
+
+supervisor 是一个 LLM：它调用 `delegate` 工具并只返回一个 `Command(goto=...)`。
+三点设计必须记住，否则会踩坑：
+
+| 决定 | 原因 |
+| --- | --- |
+| 委派消息**不写入** `messages` | 否则它带着 tool_calls 进 SSE 流，评测的 `known_tools` 和 `tool_budget` 会把每轮判失败 |
+| 专家是同图的具名节点，**不是编译子图** | 子图在 SSE 里会同时产生内部事件和父图回显，同一条消息投递两次，`tool_calls_matched` 判失败 |
+| 失败必须回退并记录 | 模型超时 → `decided_by=timeout`；目标不在白名单或没调工具 → `decided_by=rules_fallback`，都退回 `doc_expert`，请求不会丢 |
+
+`decided_by` 的取值：`model`（模型给出合法委派）、`rules_fallback`（模型没决定，按
+确定性规则兜底）、`timeout`（委派超时）、`default`（未进入委派分支）。
+
+因此“委派错了专家”可以单独被归因：案例用 `expected_intent` 声明期望的专家，
+目标不一致就判 `route` 失败，并在理由里带上实际的 `decided_by`。
+
+## 6. 局限
 
 - 记录保存在服务进程内存中，最多保留最近 200 次运行、每次 12 条记录。进程重启、
   多副本部署或记录被挤出后读到空列表，属于预期行为，不影响主链路。

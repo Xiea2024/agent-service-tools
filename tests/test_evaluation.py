@@ -77,8 +77,8 @@ def case(case_id="one", turns=1):
 
 def test_fixed_suite_is_valid_and_selection_preserves_order():
     fixed = load_suite(ROOT / "evals/supportpilot/cases.json")
-    assert len(fixed.cases) == 10
-    assert sum(len(c.turns) for c in fixed.cases) == 12
+    assert len(fixed.cases) == 12
+    assert sum(len(c.turns) for c in fixed.cases) == 14
     selected = load_suite(ROOT / "evals/supportpilot/cases.json", ["SP10", "SP01"])
     assert [c.id for c in selected.cases] == ["SP01", "SP10"]
     with pytest.raises(ValueError, match="未知案例"):
@@ -209,7 +209,7 @@ def test_cli_validation_does_not_create_client(monkeypatch, capsys):
     monkeypatch.setattr("client.AgentClient", unexpected_client)
     monkeypatch.setattr("sys.argv", ["evaluate_supportpilot.py", "--validate-only"])
     runpy.run_path(str(ROOT / "scripts/evaluate_supportpilot.py"), run_name="__main__")
-    assert "10 个案例，12 轮" in capsys.readouterr().out
+    assert "12 个案例，14 轮" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -344,6 +344,8 @@ async def test_existing_client_sse_api_and_real_graph(tmp_path, monkeypatch):
     model.bind_tools.return_value = model
     model.ainvoke = AsyncMock(
         side_effect=[
+            # supervisor 的委派响应：不进入会话历史，只决定走哪个专家。
+            AIMessage(content="委派给文档专家。"),
             AIMessage(
                 content="",
                 tool_calls=[

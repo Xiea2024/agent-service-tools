@@ -117,9 +117,20 @@ def _configured_variant() -> str:
 
 
 def run_id_of(config: Any) -> str:
-    """从 RunnableConfig 取本次运行的标识；没有则归入无绑定桶。"""
+    """从 RunnableConfig 取本次请求的标识；没有则归入无绑定桶。
+
+    优先读 ``metadata.run_id``：LangGraph 会给每个节点生成自己的 run_id，节点里读
+    ``config["run_id"]`` 拿到的是节点级标识，按它分组会把一轮问答拆成多条记录。
+    ``metadata`` 由服务在构造 RunnableConfig 时写入并原样下发到子图，是唯一稳定的来源。
+    """
     if isinstance(config, dict):
-        for candidate in (config.get("run_id"), (config.get("configurable") or {}).get("run_id")):
+        metadata = config.get("metadata") or {}
+        candidates = (
+            metadata.get("run_id") if isinstance(metadata, dict) else None,
+            (config.get("configurable") or {}).get("run_id"),
+            config.get("run_id"),
+        )
+        for candidate in candidates:
             if candidate:
                 return str(candidate)[:MAX_RUN_ID_CHARS]
     return _UNBOUND

@@ -86,20 +86,32 @@ def attribute(turn: Turn, result: dict[str, Any]) -> dict[str, Any]:
     if not failed and result.get("status") == "passed":
         return _verdict("none", "全部自动检查通过", failed, stages)
 
-    # 1. route：需要检索却没检索，或明确不需要却检索了。确定性分类器只是旁证。
+    # 1. route：委派错了专家，或需要检索却没检索、不需要却检索了。
+    #    supervisor 由模型决定，所以这里要同时看它选的 target 和决定的来源。
     routed = grouped.get("route") or []
-    intent = routed[0]["decisions"].get("intent") if routed else None
+    decisions = routed[0].get("decisions", {}) if routed else {}
+    target = decisions.get("target")
+    decided_by = decisions.get("decided_by")
+    expected_intent = getattr(turn, "expected_intent", None)
+    if expected_intent and target and target != expected_intent:
+        return _verdict(
+            "route",
+            f"supervisor 委派到 {target}，案例期望 {expected_intent}（decided_by={decided_by}）",
+            failed,
+            stages,
+        )
     if turn.retrieval == "required" and not calls:
         return _verdict(
             "route",
-            f"案例要求检索，本轮没有调用工具（规则判断 intent={intent or '未知'}）",
+            f"案例要求检索，本轮没有调用工具（委派 {target or '未知'}，decided_by={decided_by}）",
             failed,
             stages,
         )
     if turn.retrieval == "forbidden" and calls:
         return _verdict(
             "route",
-            f"案例要求不检索，本轮调用了 {len(calls)} 次工具（规则判断 intent={intent or '未知'}）",
+            f"案例要求不检索，本轮调用了 {len(calls)} 次工具"
+            f"（委派 {target or '未知'}，decided_by={decided_by}）",
             failed,
             stages,
         )

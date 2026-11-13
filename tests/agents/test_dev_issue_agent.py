@@ -55,9 +55,14 @@ async def test_selected_and_default_model_are_forwarded(model):
 async def test_invoke_preserves_history_and_isolates_threads(model, monkeypatch):
     """通过真实 API 和注册表调用图，确认追问后补充的信息能进入下一轮模型输入。"""
     mock_model, _ = model
+    # 每轮两次模型调用：supervisor 委派（这里没有 tool_calls，按规则回退到文档专家）+ 专家回答。
+    delegated = AIMessage(content="委派给文档专家。")
     mock_model.ainvoke.side_effect = [
+        delegated,
         AIMessage(content="请补充失败时间和响应码。"),
+        delegated,
         AIMessage(content="已记录今天十点和 500，根因仍待验证。"),
+        delegated,
         AIMessage(content="请提供启动命令和缺失依赖的名称。"),
     ]
     graph = agent.compile(checkpointer=MemorySaver())
@@ -78,13 +83,15 @@ async def test_invoke_preserves_history_and_isolates_threads(model, monkeypatch)
         metadata = await client.get("/info")
         assert "dev-issue-agent" in {item["key"] for item in metadata.json()["agents"]}
     calls = mock_model.ainvoke.await_args_list
-    assert isinstance(calls[1].args[0][0], SystemMessage)
-    assert [message.content for message in calls[1].args[0][1:]] == [
+    # 偶数下标是 supervisor 的委派调用，奇数下标才是文档专家的回答调用：
+    # 第 2 轮专家调用在 calls[3]，第 3 轮在 calls[5]。
+    assert isinstance(calls[3].args[0][0], SystemMessage)
+    assert [message.content for message in calls[3].args[0][1:]] == [
         "订单接口返回 500",
         "请补充失败时间和响应码。",
         "今天十点，响应码 500",
     ]
-    assert [message.content for message in calls[2].args[0][1:]] == ["启动时提示依赖缺失"]
+    assert [message.content for message in calls[5].args[0][1:]] == ["启动时提示依赖缺失"]
     saved = await graph.aget_state({"configurable": {"thread_id": "api-error"}})
     assert [message.type for message in saved.values["messages"]] == ["human", "ai", "human", "ai"]
 

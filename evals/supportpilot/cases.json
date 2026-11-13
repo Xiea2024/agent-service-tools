@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "id": "supportpilot-smoke",
-  "version": "1.0",
-  "description": "10 个合成案例、12 轮对话。跨域问题对应本地已有文档的主题，但未将文档正文、真实链接或真实故障信息写入案例。自动规则与人工质量复核分开；未标注真实文档 ID 前不计算检索召回率。",
+  "version": "1.1",
+  "description": "12 个合成案例、14 轮对话。跨域问题对应本地已有文档的主题，但未将文档正文、真实链接或真实故障信息写入案例。SP11、SP12 覆盖 supervisor 委派到日志专家；自动规则与人工质量复核分开；未标注真实文档 ID 前不计算检索召回率。",
   "cases": [
     {
       "id": "SP01",
@@ -111,6 +111,28 @@
           "rubric": ["本轮实际检索，query 带有跨域或 Access-Control-Allow-Origin 等上下文，避免只检索含糊的“这里”。", "回答围绕同一主题；引用可来自本轮或同一案例此前的实际证据。", "区分 Origin 的含义与具体系统配置，不臆造用户的域名。"]
         }
       ]
+    },
+    {
+      "id": "SP11",
+      "title": "粘贴堆栈走日志专家",
+      "category": "log_diag",
+      "turns": [{
+        "message": "2026-11-12 10:03:21,114 ERROR [http-nio-8080-exec-3] request_id=abc123def456\nTraceback (most recent call last):\n  File \"/srv/app/handler.py\", line 42, in handle\n    return downstream.call(payload)\n  File \"/srv/app/client.py\", line 88, in call\n    raise TimeoutError(\"upstream timeout\")\nTimeoutError: upstream timeout\n请分析这段日志。",
+        "retrieval": "forbidden",
+        "expected_intent": "log_expert",
+        "rubric": ["由日志专家处理，不调用文档检索工具。", "只引用日志里真实出现的字段：时间 2026-11-12 10:03:21、级别 ERROR、异常 TimeoutError、request_id abc123def456、两处堆栈位置。", "不编造日志里没有的状态码、下游服务名或用户请求路径；候选原因标注为未经验证。"]
+      }]
+    },
+    {
+      "id": "SP12",
+      "title": "日志缺字段时说明无法确定",
+      "category": "log_diag_boundary",
+      "turns": [{
+        "message": "WARN 服务变慢了，好像和缓存有关，其他信息暂时没有。",
+        "retrieval": "forbidden",
+        "expected_intent": "log_expert",
+        "rubric": ["由日志专家处理，明确指出缺少时间戳、异常类型或状态码，不能确定根因。", "最多提出 3 条需要补充的信息，优先要带时间戳的原始日志片段。", "不编造 request_id、堆栈位置或具体缓存键，不声称已执行任何检查。"]
+      }]
     }
   ]
 }

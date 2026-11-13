@@ -1,13 +1,12 @@
-"""确定性意图规则：在调用模型之前判断这轮问题是否需要检索资料。
+"""确定性意图规则：给 supervisor 兜底，不是主路由。
 
-Iter 1 只把判断结果记录成 route 阶段，不改变图的走向；Iter 2 的 router 节点
-会消费同一个函数，把“规则优先、模型兜底”变成真实的分流，避免为寒暄和
-纯澄清问题付出一次模型调用。
+真正的路由由 LLM supervisor 决定（见 agents/supervisor.py）。这个模块只在
+模型没给出合法委派时兜底，所以它的输出会标成 ``decided_by=rules_fallback``，
+不会被当成“模型判断”。
 
-这里刻意使用关键词而不是模型：
-- 成本为零，且结果可复现，适合作为归因的对照基线；
-- 关键词命中与否本身就是一条可观测信号（route.matched_rule）；
-- 规则判断不了的问题记为 general，交给模型，不假装已经分类成功。
+区分「提到 500」和「贴了一段日志」很重要：只有出现堆栈、级别+时间戳、
+request_id 这类**日志结构**才进日志分支，否则一句“订单接口返回 500”
+会被误判成日志诊断。
 """
 
 from __future__ import annotations
@@ -49,12 +48,22 @@ SMALLTALK: tuple[str, ...] = (
     "晚上好",
 )
 
-_LOG_SIGNAL = re.compile(r"(?:\b5\d{2}\b|traceback|exception|stack\s*trace)", re.IGNORECASE)
+# 日志结构特征：出现任意一条才认为用户贴的是日志。裸的 “500” 不算。
+_LOG_SIGNAL = re.compile(
+    r"(?im)"
+    r"traceback \(most recent call last\)"
+    r"|file \"[^\"]+\", line \d+"
+    r"|\bat [\w$.]+\([\w$]+\.java:\d+\)"
+    r"|\b(?:trace|debug|info|warn|warning|error|fatal|critical)\b\s*[\d:\[]"
+    r"|(?:request[_-]?id|trace[_-]?id)\s*[:=]"
+)
+_TIMESTAMP = re.compile(r"\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}")
+_LEVEL_TOKEN = re.compile(r"\b(?:ERROR|FATAL|WARN|WARNING)\b")
 
 
 @dataclass(frozen=True, slots=True)
 class RouteDecision:
-    """一次路由判断的结果；字段都可直接进指标，不含原文。"""
+    """一次规则判断的结果；字段都可直接进指标，不含原文。"""
 
     intent: str
     needs_retrieval: bool
@@ -69,7 +78,7 @@ class RouteDecision:
 
 
 def classify_intent(text: str) -> RouteDecision:
-    """把一句话分成 doc_qa / log_diag / general，并判断是否需要检索。"""
+    """把一轮输入分成 doc_qa / log_diag / general。"""
     normalized = " ".join((text or "").split())
     if not normalized:
         return RouteDecision("general", False, "empty")
@@ -77,10 +86,15 @@ def classify_intent(text: str) -> RouteDecision:
 
     if any(word in normalized for word in SMALLTALK) and len(normalized) <= 12:
         return RouteDecision("general", False, "smalltalk")
-    if _LOG_SIGNAL.search(normalized):
-        return RouteDecision("log_diag", True, "log_signal")
+
+    # 先判日志：贴了日志的人通常同时提到“报错”，不能让关键词规则抢占。
+    if _LOG_SIGNAL.search(normalized) or (
+        _TIMESTAMP.search(normalized) and _LEVEL_TOKEN.search(normalized)
+    ):
+        return RouteDecision("log_diag", False, "log_structure")
+
     hits = [word for word in RETRIEVAL_HINTS if word.lower() in lowered]
     if hits:
         intent = "log_diag" if "日志" in hits or "堆栈" in hits else "doc_qa"
-        return RouteDecision(intent, True, f"keyword:{hits[0]}")
+        return RouteDecision(intent, intent == "doc_qa", f"keyword:{hits[0]}")
     return RouteDecision("general", False, "no_hint")

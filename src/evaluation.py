@@ -31,6 +31,8 @@ class Turn(BaseModel):
     retrieval: Literal["required", "forbidden", "optional"] = "optional"
     expected_document_ids: list[str] = Field(default_factory=list)
     expected_status: Literal["ok", "no_results", "error"] | None = None
+    # 期望由哪个专家处理；为空表示这条案例不检查委派，只检查回答。
+    expected_intent: Literal["doc_expert", "log_expert"] | None = None
 
     @field_validator("message")
     @classmethod

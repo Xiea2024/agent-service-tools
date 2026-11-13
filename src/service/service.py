@@ -411,7 +411,9 @@ async def message_generator(
                     updates = updates or {}
                     update_messages = updates.get("messages", [])
                     # special cases for using langgraph-supervisor library
-                    if "supervisor" in node or "sub-agent" in node:
+                    # 这些节点的 handoff 消息需要特殊处理；本身不产出 messages 的节点
+                    # （例如只返回 Command 的调度节点）不能因此索引越界。
+                    if update_messages and ("supervisor" in node or "sub-agent" in node):
                         # the only tools that come from the actual agent are the handoff and handback tools
                         if isinstance(update_messages[-1], ToolMessage):
                             if "sub-agent" in node and len(update_messages) > 1:
