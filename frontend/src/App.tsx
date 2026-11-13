@@ -234,11 +234,8 @@ export default function App({ identity, tenantMode = false, demoMode = false }: 
       }}>
         {historyLoading ? <div className="loading-history"><LoaderCircle className="spin" size={22} />正在读取会话历史…</div> : !turns.length ? <div className="welcome">
           <span className="welcome-mark"><Command size={31} /></span>
-          <span className="eyebrow">YOUR DEBUGGING COMPANION</span>
-          <h1>把问题说清楚，<br />让排查<span>有据可依。</span></h1>
-          <p>梳理异常，查找文档，串联线索。<br />从一个问题开始，一起找到下一步。</p>
+          <p className="welcome-hint">选择一个起点，或直接在下方描述问题。</p>
           <div className="suggestions">{suggestions.map(({ icon: Icon, title, text }) => <button key={title} disabled={locked} onClick={() => { setInput(text); composer.current?.focus(); }}><Icon size={19} /><strong>{title}</strong><span>{text}</span><ArrowRight className="suggestion-arrow" size={15} /></button>)}</div>
-          <div className="welcome-foot"><span /><span>让事实成为每一步建议的起点</span><span /></div>
         </div> : <div className="messages">
           <div className="session-date"><span />本次排查<span /></div>
           {turns.map((turn, index) => {
@@ -272,7 +269,6 @@ export default function App({ identity, tenantMode = false, demoMode = false }: 
     {evidenceOpen && <aside className="evidence-panel">
       <div className="evidence-header"><div><BookOpen size={17} /><strong>证据与来源</strong></div><span className="count-badge">{evidence.length}</span><button className="icon-button evidence-mobile-close" aria-label="关闭证据面板" onClick={() => setEvidenceOpen(false)}><X size={18} /></button></div>
       <div className="evidence-scroll">
-        <div className="evidence-intro"><span className="section-kicker">CONTEXT, NOT GUESSWORK</span><p>查看本轮检索到的资料，<br />让每一条建议都有迹可循。</p></div>
         {evidenceTurn && <div className="evidence-selection"><span>当前问题</span><p>{evidenceTurn.question}</p><small>点击回答中的工具记录可查看其他轮次。</small></div>}
         <div className="section-title"><span>工具记录</span><span>{tools.length ? `${tools.length} 次调用` : '等待调用'}</span></div>
         {tools.length ? <div className="tool-list">{tools.map(tool => <div className="tool-record" key={tool.id}><span className={`tool-state ${tool.result?.status || (evidenceTurn?.status === 'streaming' ? 'pending' : 'unknown')}`}>{!tool.result && evidenceTurn?.status === 'streaming' ? <LoaderCircle size={13} className="spin" /> : tool.result?.status === 'ok' ? <Check size={13} /> : <Search size={13} />}</span><div><strong>{tool.call?.name === 'search_feishu_documents' ? demoMode ? '文档检索（预录）' : '搜索飞书文档' : tool.call?.name || '文档检索结果'}</strong>{tool.call?.args.query != null && <p>{String(tool.call.args.query)}</p>}<small>{tool.result?.message || (evidenceTurn?.status === 'streaming' ? '正在等待结果…' : '未收到工具结果')}</small></div></div>)}</div> : <div className="quiet-card"><Search size={17} /><p>{evidenceTurn ? '本轮尚无工具记录。普通问答可能无需检索。' : '需要文档依据时，助手会检索已导入的知识库。'}</p></div>}
@@ -281,7 +277,7 @@ export default function App({ identity, tenantMode = false, demoMode = false }: 
           <div className="source-number"><span><FileText size={12} />来源 {String(index + 1).padStart(2, '0')}</span>{typeof hit.score === 'number' && Number.isFinite(hit.score) && <small title="向量相似度，不代表答案正确率">相似度 {hit.score.toFixed(3)}</small>}</div>
           <h3>{hit.title}</h3><p className="source-excerpt">{hit.content}</p>{hit.truncated && <small className="truncated">正文已由后端截断</small>}
           <div className="source-footer"><span title={hit.chunk_id}>片段 {hit.chunk_id.slice(0, 8)}</span>{safeUrl(hit.source_url) ? <a href={safeUrl(hit.source_url)} target="_blank" rel="noreferrer">查看原文<ExternalLink size={12} /></a> : <span>来源链接不可用</span>}</div>
-        </article>) : <div className="empty-evidence"><span className="empty-document"><FileText size={30} /><Search size={17} /></span><strong>线索，会在这里汇集</strong><p>检索命中的文档片段与来源链接<br />将在这里展示。</p></div>}
+        </article>) : <div className="empty-evidence"><span className="empty-document"><FileText size={30} /><Search size={17} /></span><strong>暂无命中片段</strong><p>本轮没有返回文档片段；普通问答可能不需要检索。</p></div>}
       </div>
       <div className="evidence-foot"><ShieldCheck size={14} /><span>资料用于辅助判断，不能单独证明故障根因。</span></div>
     </aside>}

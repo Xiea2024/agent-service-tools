@@ -1,0 +1,129 @@
+/* 首页 store 风格：深色、卡片优先，只作用于 .store，不影响工作台与评测页。 */
+.store {
+  --store-bg: #0b0b0c;
+  --store-panel: #141416;
+  --store-panel-hover: #191919;
+  --store-line: #242426;
+  --store-line-strong: #35353a;
+  --store-ink: #f4f4f5;
+  --store-muted: #8f8f99;
+  --store-accent: #ff6363;
+  min-height: 100dvh;
+  background: var(--store-bg);
+  color: var(--store-ink);
+  font-family: 'Inter', 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.store a { color: inherit; text-decoration: none; }
+.store a:focus-visible,
+.store button:focus-visible { outline: 2px solid var(--store-accent); outline-offset: 3px; border-radius: 6px; }
+
+.store-header {
+  height: 60px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--store-line);
+}
+
+.store-header-inner {
+  max-width: 1100px;
+  height: 100%;
+  margin: 0 auto;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  gap: 26px;
+}
+
+.store-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: .06em;
+}
+
+.store-brand .store-mark { color: var(--store-accent); font-size: 19px; line-height: 1; }
+
+.store-nav { margin-left: auto; display: flex; align-items: center; gap: 20px; font-size: 13px; }
+.store-nav a { color: var(--store-muted); display: inline-flex; align-items: center; gap: 5px; }
+.store-nav a:hover { color: var(--store-ink); }
+
+.store-main { flex: 1; width: 100%; max-width: 1100px; margin: 0 auto; padding: 44px 24px 72px; }
+
+.store-label {
+  margin: 0 0 18px;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--store-muted);
+}
+
+.store-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 760px) { .store-grid { grid-template-columns: 1fr; } .store-main { padding: 36px 18px 56px; } .store-intro h1 { font-size: 24px; } }
+
+.store-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--store-panel);
+  border: 1px solid var(--store-line);
+  border-radius: 12px;
+  padding: 18px;
+  transition: background .15s ease, border-color .15s ease, transform .15s ease;
+}
+.store-card:hover { background: var(--store-panel-hover); border-color: var(--store-line-strong); transform: translateY(-1px); }
+
+.store-card-top { display: flex; align-items: center; gap: 12px; }
+
+.store-icon {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--store-line-strong);
+  background: #1d1d20;
+  color: var(--store-ink);
+}
+
+.store-card-title { min-width: 0; }
+.store-card-title h2 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: -.01em; }
+.store-card-title span { display: block; color: var(--store-muted); font-size: 12px; margin-top: 2px; }
+
+.store-arrow { margin-left: auto; color: var(--store-muted); flex: 0 0 auto; }
+.store-card:hover .store-arrow { color: var(--store-ink); }
+
+.store-card p { margin: 0; color: var(--store-muted); font-size: 13px; line-height: 1.75; }
+
+.store-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+.store-tag {
+  font-size: 11px;
+  color: var(--store-muted);
+  border: 1px solid var(--store-line);
+  border-radius: 6px;
+  padding: 2px 7px;
+  background: #101012;
+}
+
+.store-foot {
+  border-top: 1px solid var(--store-line);
+  flex: 0 0 auto;
+}
+.store-foot-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 18px 24px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--store-muted);
+  font-size: 12px;
+}
+.store-foot-inner a { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.store-foot-inner a:hover { color: var(--store-ink); }

@@ -176,6 +176,12 @@ if not public_settings().PUBLIC_DEMO:
 
     router.include_router(agui_router)
 router.include_router(blog_router)
+# 评测入口只在本机/团队自用时开放：多租户模式下评测使用共享密钥，
+# 公开演示模式会消耗真实模型额度，两者都不应暴露。
+if not settings.TENANT_MODE and not public_settings().PUBLIC_DEMO:
+    from service.eval_api import router as eval_router
+
+    router.include_router(eval_router)
 
 
 @router.get("/info")

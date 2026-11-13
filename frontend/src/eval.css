@@ -1,0 +1,113 @@
+/* 评测页的局部样式：只作用于 .eval-page，避免影响工作台与博客页面。 */
+.eval-page {
+  --eval-border: #e3e8ef;
+  --eval-muted: #5b6b7c;
+  --eval-ink: #172b4d;
+  --eval-bg: #f7f9fc;
+  min-height: 100vh;
+  background: var(--eval-bg);
+  color: var(--eval-ink);
+  padding: 28px clamp(16px, 4vw, 48px) 64px;
+  font-family: system-ui, -apple-system, 'Microsoft YaHei', sans-serif;
+}
+
+.eval-page header.eval-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.eval-page h1 { font-size: 22px; margin: 0; }
+.eval-page .eval-sub { color: var(--eval-muted); font-size: 13px; margin: 4px 0 0; }
+
+.eval-grid {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .eval-grid { grid-template-columns: 1fr; }
+}
+
+.eval-card {
+  background: #fff;
+  border: 1px solid var(--eval-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.eval-card h2 {
+  font-size: 13px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--eval-muted);
+  margin: 0 0 10px;
+}
+
+.eval-cases { max-height: 420px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+.eval-cases label { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 3px 0; cursor: pointer; }
+.eval-cases .eval-case-title { color: var(--eval-muted); font-size: 12px; }
+.eval-case-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+
+.eval-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
+.eval-page button {
+  font: inherit;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--eval-border);
+  background: #fff;
+  color: var(--eval-ink);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.eval-page button:hover:not(:disabled) { border-color: #b6c2d1; }
+.eval-page button:disabled { opacity: .55; cursor: not-allowed; }
+.eval-page button.primary { background: var(--eval-ink); border-color: var(--eval-ink); color: #fff; }
+.eval-page button.link { border: none; background: none; padding: 0; color: #2563eb; font-size: 12px; }
+
+.eval-rows { width: 100%; border-collapse: collapse; font-size: 13px; }
+.eval-rows th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--eval-muted);
+  font-size: 12px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--eval-border);
+  white-space: nowrap;
+}
+.eval-rows td { padding: 7px 8px; border-bottom: 1px solid #f0f3f7; vertical-align: top; }
+.eval-rows tr.eval-row { cursor: pointer; }
+.eval-rows tr.eval-row:hover { background: #fbfcfe; }
+.eval-reason { color: var(--eval-muted); font-size: 12px; margin-top: 2px; }
+.eval-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+.eval-chip {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.eval-chip.ok { background: #e7f6ec; color: #10693a; border-color: #bfe6cd; }
+.eval-chip.warn { background: #fff4e0; color: #8a4b00; border-color: #f3d9ae; }
+.eval-chip.bad { background: #fdeaea; color: #9b1c1c; border-color: #f3c9c9; }
+.eval-chip.mute { background: #eef2f7; color: #46586b; border-color: #dbe3ec; }
+
+.eval-stages { background: #fafbfd; border: 1px dashed var(--eval-border); border-radius: 8px; padding: 10px 12px; }
+.eval-stage-line { display: flex; gap: 10px; align-items: baseline; font-size: 12px; padding: 2px 0; }
+.eval-stage-line .eval-decisions { color: var(--eval-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.eval-metric { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; }
+.eval-metric strong { font-size: 18px; }
+.eval-bar { height: 6px; border-radius: 3px; background: #eef2f7; overflow: hidden; }
+.eval-bar span { display: block; height: 100%; background: #9b1c1c; }
+.eval-empty { color: var(--eval-muted); font-size: 13px; padding: 10px 0; }
+.eval-error { color: #9b1c1c; font-size: 13px; }
