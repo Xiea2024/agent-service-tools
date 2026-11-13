@@ -47,6 +47,7 @@ OUTCOMES: tuple[str, ...] = (
     "unused_hits",
     "unsupported_citation",
     "budget_exhausted",
+    "conflict",
     "timeout",
     "error",
     "skipped",

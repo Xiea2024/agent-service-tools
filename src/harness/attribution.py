@@ -116,7 +116,11 @@ def attribute(turn: Turn, result: dict[str, Any]) -> dict[str, Any]:
             stages,
         )
 
-    # 2. retrieve：调用失败、命中为空、或没命中应命中的文档。
+    # 2. memory：案例要求召回长期记忆但没有召回。
+    if "memory_recalled" in failed:
+        return _verdict("memory", "没有召回应有的长期记忆", failed, stages)
+
+    # 3. retrieve：调用失败、命中为空、或没命中应命中的文档。
     retrieved = grouped.get("retrieve") or []
     broken = [r for r in retrieved if r.get("outcome") in {"error", "timeout"}]
     if broken:

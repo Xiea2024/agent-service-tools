@@ -33,6 +33,8 @@ class Turn(BaseModel):
     expected_status: Literal["ok", "no_results", "error"] | None = None
     # 期望由哪个专家处理；为空表示这条案例不检查委派，只检查回答。
     expected_intent: Literal["doc_expert", "log_expert"] | None = None
+    # 要求本轮召回长期记忆：检查服务端 memory 阶段的记录，而不是关键词。
+    expect_memory: bool = False
 
     @field_validator("message")
     @classmethod
@@ -225,6 +227,21 @@ async def evaluate_turn(
     fetch_stages = getattr(client, "astages", None)
     fetched = await fetch_stages(run_id) if run_id and fetch_stages else []
     stages = [record for record in fetched or [] if isinstance(record, dict)]
+    if turn.expect_memory:
+        # 记忆是否真的被召回，看服务端记录，而不是看回答里有没有某个词。
+        recalled = [
+            record
+            for record in stages
+            if record.get("stage") == "memory"
+            and int(record.get("decisions", {}).get("hit") or 0) > 0
+        ]
+        checks.append(
+            {
+                "name": "memory_recalled",
+                "passed": bool(recalled),
+                "detail": f"memory 阶段记录 {len(recalled)} 条命中",
+            }
+        )
     result = {
         "message": turn.message,
         "thread_id": thread_id,
@@ -404,12 +421,14 @@ async def run_evaluation(
             for case in suite.cases:
                 thread_id = str(uuid4())
                 allowed_urls: set[str] = set()
+                # 每个案例一个记忆用户：案例之间不共享事实，案例内部多轮可以共享。
+                case_user = f"eval:{manifest['evaluation_id']}:{case.id}"
                 for index, turn in enumerate(case.turns, start=1):
                     result = await evaluate_turn(
                         client,
                         turn,
                         thread_id,
-                        f"eval:{manifest['evaluation_id']}",
+                        case_user,
                         model,
                         timeout,
                         allowed_urls,

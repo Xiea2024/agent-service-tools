@@ -72,9 +72,9 @@ async def wait_for(job_id: str, timeout: float = 3.0) -> dict:
 @pytest.mark.asyncio
 async def test_cases_endpoint_lists_the_fixed_suite():
     body = (await call("GET", "/eval/cases")).json()
-    assert len(body["cases"]) == 12
+    assert len(body["cases"]) == 14
     assert body["cases"][0]["id"] == "SP01"
-    assert sum(case["turns"] for case in body["cases"]) == 14
+    assert sum(case["turns"] for case in body["cases"]) == 18
 
 
 @pytest.mark.asyncio

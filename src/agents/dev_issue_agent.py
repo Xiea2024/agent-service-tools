@@ -17,6 +17,7 @@
 
 import asyncio
 import json
+import logging
 import re
 from collections.abc import Iterable
 from time import monotonic
@@ -39,8 +40,11 @@ from agents.supervisor import (
 from core import get_model, settings
 from document_retrieval import search_feishu_documents
 from log_facts import parse_log_facts
+from memory_facts import extract_facts, fact_store, render_block
 from observability.metrics import operation
-from observability.stages import EVIDENCE, GENERATE, ROUTE, VERIFY, stage
+from observability.stages import EVIDENCE, GENERATE, MEMORY, ROUTE, VERIFY, run_id_of, stage
+
+logger = logging.getLogger(__name__)
 
 # supervisor 只该花很少时间：它是 65 秒预算里的第一个 15 秒，超时就退回文档专家。
 SUPERVISOR_TIMEOUT = 15
@@ -53,10 +57,12 @@ class DevIssueState(MessagesState, total=False):
 
     intent / decided_by 是 supervisor 的委派结果；retrieval_* 是本轮工具实际返回
     的片段标识、来源链接和分数，只用于 evidence / verify 两个阶段的记录。
+    memory_block 是注入提示词的环境事实；它随 checkpoint 保存，但只是纯文本。
     """
 
     tool_rounds: int
     deadline: float
+    memory_block: str
     intent: str
     decided_by: str
     retrieval_hit_ids: list[str]
@@ -237,14 +243,79 @@ def _record_verify(
             observed["outcome"] = "unsupported_citation"
 
 
+def _memory_enabled() -> bool:
+    """多租户与公开演示不启用本地事实表，避免出现两套事实来源或跨访客泄漏。"""
+    from tenancy.security import public_settings
+
+    return not settings.TENANT_MODE and not public_settings().PUBLIC_DEMO
+
+
+def _update_memory(state: DevIssueState, config: RunnableConfig) -> str:
+    """写入本轮明确陈述的事实并回读，返回要注入提示词的文本块。
+
+    长期记忆是增强项：任何异常都只记录错误、返回空块，绝不影响本轮回答。
+    """
+    user_id = str(config.get("configurable", {}).get("user_id") or "")
+    if not user_id:
+        with stage(MEMORY, config=config) as observed:
+            observed["outcome"] = "skipped"
+        return ""
+    try:
+        store = fact_store()
+        run_id = run_id_of(config)
+        written, conflicts = store.remember(
+            user_id,
+            extract_facts(_last_human_text(state)),
+            None if run_id == "_unbound" else run_id,
+        )
+        facts = store.recall(user_id)
+    except Exception:  # noqa: BLE001 - 记忆故障不能阻断回答
+        logger.exception("长期记忆读写失败，本轮不使用记忆")
+        with stage(MEMORY, config=config) as observed:
+            observed["outcome"] = "error"
+        return ""
+    with stage(MEMORY, config=config) as observed:
+        observed["hit"] = len(facts)
+        observed["written"] = len(written)
+        observed["conflicts"] = len(conflicts)
+        if conflicts:
+            observed["outcome"] = "conflict"
+        else:
+            observed["outcome"] = "success" if facts else "no_results"
+    return render_block(facts, conflicts)
+
+
+MEMORY_INSTRUCTION = (
+    "以上事实来自用户此前的明确陈述：不要重复追问已记录的字段；"
+    "与本次陈述冲突时先向用户确认，不要直接采用新值。"
+)
+
+
+def _system_prompt(base: str, state: DevIssueState, extra: str = "") -> str:
+    """拼装系统消息：基础提示词 + 本轮附加块 + 记忆块。"""
+    parts = [base]
+    if extra:
+        parts.append(extra)
+    block = state.get("memory_block") or ""
+    if block:
+        parts.append(f"{block}\n\n{MEMORY_INSTRUCTION}")
+    return "\n\n".join(parts)
+
+
 def prepare_turn(state: DevIssueState, config: RunnableConfig) -> DevIssueState:
-    """每次用户请求重新预算；65 秒小于飞书默认 75 秒的等待窗口。"""
+    """每次用户请求重新预算；65 秒小于飞书默认 75 秒的等待窗口。
+
+    同时做长期记忆的写入与召回：只从用户这句话里抽取白名单事实，
+    再把未过期的事实交给本轮专家使用。
+    """
+    block = _update_memory(state, config) if _memory_enabled() else ""
     return {
         "messages": [],
         "tool_rounds": 0,
         "deadline": monotonic() + 65,
         "intent": "",
         "decided_by": "",
+        "memory_block": block,
         "retrieval_hit_ids": [],
         "retrieval_urls": [],
         "retrieval_scores": [],
@@ -289,7 +360,7 @@ async def respond(state: DevIssueState, config: RunnableConfig) -> DevIssueState
     if not public_settings().PUBLIC_DEMO:
         model = get_model(model_name).bind_tools(tools)
     # SystemMessage 只用于本次模型输入，不写入 checkpoint，避免每轮重复保存 Prompt。
-    messages = [SystemMessage(content=DEV_ISSUE_PROMPT), *state["messages"]]
+    messages = [SystemMessage(content=_system_prompt(DEV_ISSUE_PROMPT, state)), *state["messages"]]
     if public_settings().PUBLIC_DEMO:
         from fastapi import HTTPException
         from langchain_core.messages import trim_messages
@@ -394,7 +465,7 @@ async def log_expert(state: DevIssueState, config: RunnableConfig) -> DevIssueSt
     model, model_name = _model_for(config)
     # 解析结果放在 SystemMessage 里，不写入 checkpoint，避免原始日志被重复保存。
     messages = [
-        SystemMessage(content=f"{LOG_EXPERT_PROMPT}\n\n{parsed.as_prompt_block()}"),
+        SystemMessage(content=_system_prompt(LOG_EXPERT_PROMPT, state, parsed.as_prompt_block())),
         *state["messages"],
     ]
     remaining = state.get("deadline", monotonic() + 60) - monotonic()

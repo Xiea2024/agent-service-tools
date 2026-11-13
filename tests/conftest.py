@@ -32,3 +32,13 @@ def mock_env():
     }
     with patch.dict(os.environ, runtime_paths, clear=True):
         yield
+
+
+@pytest.fixture(autouse=True)
+def isolated_fact_store(tmp_path):
+    """每个用例使用独立的事实表，避免测试之间共享长期记忆或写进仓库 .local/。"""
+    from memory_facts import reset_fact_store
+
+    reset_fact_store(tmp_path / "memory-facts.sqlite3")
+    yield
+    reset_fact_store(None)

@@ -295,7 +295,7 @@ node(
     750,
     125,
     "共享评测器 → AgentClient.astream → /stream",
-    ["同一 dev-issue-agent；固定 12 案例、14 轮"],
+    ["同一 dev-issue-agent；固定 14 案例、18 轮"],
     accent=PURPLE,
     size=24,
 )

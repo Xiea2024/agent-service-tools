@@ -73,7 +73,7 @@ QDRANT_COLLECTION=dev_issue_documents_bge_m3_v1
 | 配置 | 作用 |
 | --- | --- |
 | `FEISHU_EVAL_ENABLED=true` | 开启飞书后台评测；默认开启，仅 agent 模式生效 |
-| `FEISHU_EVAL_CASES_PATH=evals/supportpilot/cases.json` | 飞书完整 12 案例；快速演示可选择另存的单案例文件 |
+| `FEISHU_EVAL_CASES_PATH=evals/supportpilot/cases.json` | 飞书完整 14 案例；快速演示可选择另存的单案例文件 |
 | `FEISHU_EVAL_ALLOWED_OPEN_IDS` | 限定可发起、查询自己评测的用户，逗号分隔；留空不额外限名单 |
 | `FEISHU_REPORT_FOLDER_TOKEN` | 可选报告云盘文件夹 token，应用需有写入权限 |
 | `FEISHU_BYPASS_PROXY=true` | 网络确需时，仅对飞书域名绕过代理 |

@@ -30,7 +30,7 @@ React 网页工作台支持提问、流式回答、历史会话和文档证据�
 | 多轮会话 | SQLite 保存会话列表与当前选择，LangGraph checkpoint 保存消息历史 |
 | 回答反馈 | 先保存问题、答案和运行标识，再发卡片；检查提交归属，首个有效评价生效 |
 | 任务恢复 | 可选 Redis Streams、原子去重及 TTL；排队任务恢复，已保存回答复用，结果不明时待人工确认 |
-| 回归评测 | 固定 12 案例、14 轮；复用 AgentClient，留存答案、工具消息、检索证据、规则结果与耗时 |
+| 回归评测 | 固定 14 案例、18 轮；复用 AgentClient，留存答案、工具消息、检索证据、规则结果与耗时 |
 | 飞书报告 | 菜单或命令发起后台评测，发布文档、授予发起人阅读权限、发送完成卡片；发布失败保留本地报告 |
 
 ## 架构概览
@@ -100,7 +100,7 @@ docker compose -f docker/compose.qdrant.yaml up -d
 .\.venv\Scripts\python.exe scripts/evaluate_supportpilot.py --validate-only
 # 后端运行后，仅评测一个案例。
 .\.venv\Scripts\python.exe scripts/evaluate_supportpilot.py --case SP01
-# 默认完整 12 案例、14 轮；不要求启动飞书入口。
+# 默认完整 14 案例、18 轮；不要求启动飞书入口。
 .\.venv\Scripts\python.exe scripts/evaluate_supportpilot.py
 ```
 

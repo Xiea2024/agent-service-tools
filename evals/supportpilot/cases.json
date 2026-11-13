@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "id": "supportpilot-smoke",
-  "version": "1.1",
-  "description": "12 个合成案例、14 轮对话。跨域问题对应本地已有文档的主题，但未将文档正文、真实链接或真实故障信息写入案例。SP11、SP12 覆盖 supervisor 委派到日志专家；自动规则与人工质量复核分开；未标注真实文档 ID 前不计算检索召回率。",
+  "version": "1.2",
+  "description": "14 个合成案例、18 轮对话。跨域问题对应本地已有文档的主题，但未将文档正文、真实链接或真实故障信息写入案例。SP11、SP12 覆盖 supervisor 委派到日志专家；SP13、SP14 覆盖长期记忆的召回与冲突；自动规则与人工质量复核分开；未标注真实文档 ID 前不计算检索召回率。",
   "cases": [
     {
       "id": "SP01",
@@ -133,6 +133,46 @@
         "expected_intent": "log_expert",
         "rubric": ["由日志专家处理，明确指出缺少时间戳、异常类型或状态码，不能确定根因。", "最多提出 3 条需要补充的信息，优先要带时间戳的原始日志片段。", "不编造 request_id、堆栈位置或具体缓存键，不声称已执行任何检查。"]
       }]
+    },
+    {
+      "id": "SP13",
+      "title": "跨轮沿用环境事实",
+      "category": "memory",
+      "turns": [
+        {
+          "message": "我这边是 Windows 11，Python 3.12。",
+          "retrieval": "forbidden",
+          "expected_intent": "doc_expert",
+          "rubric": ["简短确认已知环境，不反问操作系统或 Python 版本。"]
+        },
+        {
+          "message": "还是启动失败，帮我判断下一步查什么。",
+          "retrieval": "optional",
+          "expected_intent": "doc_expert",
+          "expect_memory": true,
+          "rubric": ["沿用上一轮的 Windows 与 Python 3.12，不重复追问系统、版本这类已记录的字段。", "给出针对启动失败的检查方向，并说明仍需实际环境验证。"]
+        }
+      ]
+    },
+    {
+      "id": "SP14",
+      "title": "环境陈述冲突时先澄清",
+      "category": "memory",
+      "turns": [
+        {
+          "message": "我用的 Windows。",
+          "retrieval": "forbidden",
+          "expected_intent": "doc_expert",
+          "rubric": ["简短确认，不展开排查步骤。"]
+        },
+        {
+          "message": "更正一下，其实是 Linux，Python 3.12，启动时提示依赖缺失。",
+          "retrieval": "optional",
+          "expected_intent": "doc_expert",
+          "expect_memory": true,
+          "rubric": ["指出与之前记录的 Windows 不一致，先请用户确认，不直接按其中一个环境下结论。", "承认 Python 3.12 与依赖缺失两条新信息，给出待验证的排查方向。"]
+        }
+      ]
     }
   ]
 }

@@ -113,6 +113,7 @@ flowchart LR
 | LangGraph checkpoint | 根目录 `checkpoints.db`，可由 `SQLITE_DB_PATH` 改变 | 线程状态、消息与图执行记录 |
 | 会话目录 | `.local/feishu-sessions.sqlite3` | 用户单聊映射、当前线程、历史元信息、会话操作事件 |
 | 回答与反馈 | `.local/feishu-feedback.sqlite3` | 不可变答案快照、卡片绑定、首个有效评价 |
+| 长期记忆事实 | `.local/agent-memory.sqlite3` | 用户明确陈述的环境事实；30 天过期，冲突不覆盖，多租户模式不启用 |
 | 消息任务台账 | `.local/feishu-tasks.sqlite3` | 顺序、事件参数、执行阶段、回复引用、重试次数和错误 |
 | 评测任务 | `.local/evaluation-jobs.sqlite3` | 案例快照、状态、结果目录、document_id、链接、失败与通知状态 |
 | Redis Streams | `supportpilot-queue_redis_data` 命名卷 | 任务 ID、消费组与未确认记录、带 TTL 的去重索引 |
@@ -161,7 +162,7 @@ stateDiagram-v2
 CLI → 相同 run_evaluation → 相同后端 → 相同本地结果格式
 ```
 
-固定集当前为 12 案例、14 轮；案例间新建线程，多轮案例内部复用线程。评测记录完整消息、检索命中、规则结果、总耗时与待人工复核的 rubric，不包含可靠的逐阶段延迟、Token 成本或自动语义质量判分。
+固定集当前为 14 案例、18 轮；案例间新建线程，多轮案例内部复用线程。评测记录完整消息、检索命中、规则结果、总耗时与待人工复核的 rubric，不包含可靠的逐阶段延迟、Token 成本或自动语义质量判分。
 
 调度状态为 `queued → running → publishing → succeeded`，失败分别记为 `failed` 或 `publish_failed`。进程重启时旧活动评测记为 `interrupted`，保留产物，不自动重跑；这与普通消息的恢复策略不同。
 
